@@ -1,10 +1,10 @@
 #pragma once
 
-#include <glad/glad.h>
+#include "glad/glad.h" // REQUIRED for OpenGL to function, even if not used directly here
 #include <GLFW/glfw3.h>
 
 #include "render/core/Camera.hpp"
-#include "game/Chunk.hpp"
+#include "game/World.hpp"
 #include "render/gl/GLShader.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
 
@@ -46,10 +46,14 @@ private:
     bool m_FirstMouse;
 
     // World
-    Chunk m_TestChunk;
+    World world;
 
     // Rendering
     GLShader* m_BlockShader;
     GLChunkRenderer* m_ChunkRenderer;
     unsigned int m_TextureArray;
+
+    // Render layering
+    float m_GLFrom;
+    float m_GLTo;
 };

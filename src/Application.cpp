@@ -16,7 +16,7 @@
 
 Application::Application()
     : m_Window(nullptr),
-      m_Camera(glm::vec3(8.0f, 18.0f, 24.0f)),
+      m_Camera(glm::vec3(8.0f, 50.0f, 24.0f)),
       m_DeltaTime(0.0f),
       m_LastFrame(0.0f),
       m_LastX(SCR_WIDTH / 2.0f),
@@ -24,7 +24,9 @@ Application::Application()
       m_FirstMouse(true),
       m_BlockShader(nullptr),
       m_ChunkRenderer(nullptr),
-      m_TextureArray(0)
+      m_TextureArray(0),
+      m_GLFrom(0.1f),
+      m_GLTo(100.0f)
 {
 }
 
@@ -51,13 +53,13 @@ void Application::Init() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#ifdef __APPLE__ // Dead macOS aka Apple... UPDATE YOUR SYSTEM!
+#ifdef __APPLE__ // Dear macOS aka Apple... UPDATE YOUR SYSTEM!
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
     // --- 2. Create Window ---
-    m_Window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Voxel Game", NULL, NULL);
-    if (m_Window == NULL) {
+    m_Window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Voxel Game", nullptr, nullptr);
+    if (m_Window == nullptr) {
         glfwTerminate();
         throw std::runtime_error("Failed to create GLFW window");
     }
@@ -102,13 +104,16 @@ void Application::Init() {
     m_TextureArray = GLTextureUtils::LoadTexture2DArray(textureFiles);
 
     m_BlockShader->use();
-    m_BlockShader->setInt("textureArray", 0); // Changed uniform name
+    m_BlockShader->setInt("textureArray", 0);
 
     // --- 8. Create World/Chunk ---
     m_ChunkRenderer = new GLChunkRenderer();
-    m_TestChunk.GenerateSimpleTerrain();
-    m_TestChunk.BuildMesh();
-    m_ChunkRenderer->UploadMesh(m_TestChunk.GetMeshVertices());
+    for (auto [cx, column] : world.getChunks()) {
+        for (auto& [cy, chunk] : column) {
+            chunk.BuildMesh(world);
+            m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+        }
+    }
 }
 
 void Application::Run() {
@@ -168,7 +173,7 @@ void Application::Render() {
 
     // --- Draw World ---
     m_BlockShader->use();
-    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, m_GLFrom, m_GLTo);
     glm::mat4 view = m_Camera.GetViewMatrix();
     glm::mat4 model = glm::mat4(1.0f);
 
@@ -182,15 +187,30 @@ void Application::Render() {
     m_ChunkRenderer->Render();
 
     // --- Draw ImGui UI ---
-    ImGui::Begin("Debug Info");
+    ImGui::Begin("Debug Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-    ImGui::Text("Camera Pos: (%.1f, %.1f, %.1f)", m_Camera.Position.x, m_Camera.Position.y, m_Camera.Position.z);
-    ImGui::Text("Chunk Vertices: %d", m_ChunkRenderer->GetVertexCount());
+    ImGui::Text("Chunk Vertices: %d", m_ChunkRenderer->GetTotalVertexCount());
 
     if (ImGui::Button("Re-build Chunk")) {
-        m_TestChunk.BuildMesh();
-        m_ChunkRenderer->UploadMesh(m_TestChunk.GetMeshVertices());
+        m_ChunkRenderer->RemoveAllMeshes();
+        for (auto [cx, column] : world.getChunks()) {
+            for (auto& [cy, chunk] : column) {
+                chunk.BuildMesh(world);
+                m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+                printf("DEBUG: Re-built chunk (%d, %d) with %d vertices\n", cx, cy, chunk.GetVertexCount());
+            }
+        }
     }
+
+    ImGui::Text("----- CAMERA -----");
+    ImGui::Text("Pos: (%.1f, %.1f, %.1f)", m_Camera.Position.x, m_Camera.Position.y, m_Camera.Position.z);
+    ImGui::SliderFloat("Speed", &m_Camera.MovementSpeed, 1.0f, 20.0f);
+    ImGui::SliderFloat("FOV", &m_Camera.Zoom, 1.0f, 90.0f);
+
+    ImGui::Text("----- LAYERING -----");
+    ImGui::SliderFloat("GL From", &m_GLFrom, 0.01f, 50.0f);
+    ImGui::SliderFloat("GL To", &m_GLTo, m_GLFrom, 500.0f);
+
     ImGui::End();
 
     ImGui::Render();

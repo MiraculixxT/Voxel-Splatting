@@ -1,17 +1,22 @@
 #include "game/Chunk.hpp"
 #include <iostream>
 
+#include "game/World.hpp"
+#include "glm/gtc/noise.hpp"
+
 // Simple noise function for terrain debugging
 float simpleNoise(int x, int z) {
-    return (sin(x * 0.1f) + sin(z * 0.1f)) * 4.0f + 8.0f; // Basic sine wave "hills"
+    return (glm::simplex(glm::vec2(x * 0.02f, z * 0.02f)) * 10.0f + 10.0f) +
+           (glm::simplex(glm::vec2(x * 0.1f, z * 0.1f)) * 2.0f + 2.0f) +
+           32.0f; // Base level
 }
 
-Chunk::Chunk() : m_Blocks{}, m_VertexCount(0) {
+Chunk::Chunk(const int cx, const int cz) : cx(cx), cz(cz), m_Blocks{}, m_VertexCount(0) {
     // Initialize all blocks to Air
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int y = 0; y < CHUNK_HEIGHT; ++y) {
             for (int z = 0; z < CHUNK_DEPTH; ++z) {
-                m_Blocks[x][y][z] = BlockHelper::getAir();
+                m_Blocks[x][y][z] = BlockState();
             }
         }
     }
@@ -24,18 +29,20 @@ Chunk::~Chunk() {
 void Chunk::GenerateSimpleTerrain() {
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int z = 0; z < CHUNK_DEPTH; ++z) {
-            int height = static_cast<int>(simpleNoise(x, z));
+            const int dx = x + cx * CHUNK_WIDTH;
+            const int dz = z + cz * CHUNK_DEPTH;
+            int height = static_cast<int>(simpleNoise(dx, dz));
             height = glm::clamp(height, 1, CHUNK_HEIGHT - 1);
 
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 if (y < height - 3)
-                    m_Blocks[x][y][z] = BlockHelper::getBasic(BlockType::Stone);
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Stone);
                 else if (y < height)
-                    m_Blocks[x][y][z] = BlockHelper::getBasic(BlockType::Dirt);
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Dirt);
                 else if (y == height)
-                    m_Blocks[x][y][z] = BlockHelper::getBasic(BlockType::Grass);
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Grass);
                 else
-                    m_Blocks[x][y][z] = BlockHelper::getBasic(BlockType::Air);
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Air);
             }
         }
     }
@@ -46,7 +53,7 @@ BlockState Chunk::GetBlock(int x, int y, int z) const {
     if (x < 0 || x >= CHUNK_WIDTH ||
         y < 0 || y >= CHUNK_HEIGHT ||
         z < 0 || z >= CHUNK_DEPTH) {
-        return BlockHelper::getAir();
+        return BlockState(BlockType::Air);
     }
     return m_Blocks[x][y][z];
 }
@@ -89,7 +96,7 @@ void Chunk::AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p
 }
 
 
-void Chunk::BuildMesh() {
+void Chunk::BuildMesh(World &world) {
     m_MeshVertices.clear();
     m_VertexCount = 0;
 
@@ -99,65 +106,125 @@ void Chunk::BuildMesh() {
     const glm::vec2 uv3(1.0f, 1.0f);
     const glm::vec2 uv4(0.0f, 1.0f);
 
+    // World offset of this chunk
+    const auto worldOffsetX = static_cast<float>(cx * CHUNK_WIDTH);
+    const auto worldOffsetZ = static_cast<float>(cz * CHUNK_DEPTH);
+
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int y = 0; y < CHUNK_HEIGHT; ++y) {
             for (int z = 0; z < CHUNK_DEPTH; ++z) {
                 BlockState currentBlock = m_Blocks[x][y][z];
                 BlockType currentType = currentBlock.type;
                 if (BlockDatabase::IsTransparent(currentType)) {
-                    continue; // Skip invis blocks
+                    continue;
                 }
 
-                // Voxel coordinates (center of the block)
-                auto fx = static_cast<float>(x);
-                auto fy = static_cast<float>(y);
-                auto fz = static_cast<float>(z);
+                // Local voxel coords
+                const float fx = static_cast<float>(x);
+                const float fy = static_cast<float>(y);
+                const float fz = static_cast<float>(z);
 
-                // Check 6 neighbors. If neighbor is invis, add a face.
+                // Add chunk offset to get world coords
+                const float wx = fx + worldOffsetX;
+                const float wz = fz + worldOffsetZ;
 
                 // Top Face (y+)
                 if (BlockDatabase::IsTransparent(GetBlock(x, y + 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Top);
-                    AddFace({fx, fy + 1, fz}, {fx, fy + 1, fz + 1}, {fx + 1, fy + 1, fz + 1}, {fx + 1, fy + 1, fz},
-                            layer, uv1, uv4, uv3, uv2); // CCW winding
+                    AddFace({wx,     fy + 1, wz},
+                            {wx,     fy + 1, wz + 1},
+                            {wx + 1, fy + 1, wz + 1},
+                            {wx + 1, fy + 1, wz},
+                            layer, uv1, uv4, uv3, uv2);
                 }
 
                 // Bottom Face (y-)
                 if (BlockDatabase::IsTransparent(GetBlock(x, y - 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Bottom);
-                    AddFace({fx, fy, fz}, {fx + 1, fy, fz}, {fx + 1, fy, fz + 1}, {fx, fy, fz + 1},
+                    AddFace({wx,     fy, wz},
+                            {wx + 1, fy, wz},
+                            {wx + 1, fy, wz + 1},
+                            {wx,     fy, wz + 1},
                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Front Face (z+)
-                if (BlockDatabase::IsTransparent(GetBlock(x, y, z + 1))) {
+                BlockState neighborZ_pos;
+                if (z + 1 >= CHUNK_DEPTH) {
+                    if (Chunk* neighbor = world.getChunk(cx, cz + 1)) {
+                        neighborZ_pos = neighbor->GetBlock(x, y, 0); // local z is 0
+                    } else {
+                        neighborZ_pos = BlockState(BlockType::Air); // No chunk, draw face
+                    }
+                } else neighborZ_pos = GetBlock(x, y, z + 1); // Internal check
+                if (BlockDatabase::IsTransparent(neighborZ_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({fx, fy, fz + 1}, {fx + 1, fy, fz + 1}, {fx + 1, fy + 1, fz + 1}, {fx, fy + 1, fz + 1},
+                    AddFace({wx,     fy,     wz + 1},
+                            {wx + 1, fy,     wz + 1},
+                            {wx + 1, fy + 1, wz + 1},
+                            {wx,     fy + 1, wz + 1},
                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Back Face (z-)
-                if (BlockDatabase::IsTransparent(GetBlock(x, y, z - 1))) {
+                BlockState neighborZ_neg;
+                if (z - 1 < 0) {
+                    Chunk* neighbor = world.getChunk(cx, cz - 1);
+                    if (neighbor) {
+                        neighborZ_neg = neighbor->GetBlock(x, y, CHUNK_DEPTH - 1); // local z is max
+                    } else {
+                        neighborZ_neg = BlockState(BlockType::Air); // No chunk, draw face
+                    }
+                } else neighborZ_neg = GetBlock(x, y, z - 1); // Internal check
+                if (BlockDatabase::IsTransparent(neighborZ_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({fx + 1, fy, fz}, {fx, fy, fz}, {fx, fy + 1, fz}, {fx + 1, fy + 1, fz},
+                    AddFace({wx + 1, fy,     wz},
+                            {wx,     fy,     wz},
+                            {wx,     fy + 1, wz},
+                            {wx + 1, fy + 1, wz},
                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Right Face (x+)
-                if (BlockDatabase::IsTransparent(GetBlock(x + 1, y, z))) {
+                BlockState neighborX_pos;
+                if (x + 1 >= CHUNK_WIDTH) {
+                    Chunk* neighbor = world.getChunk(cx + 1, cz);
+                    if (neighbor) {
+                        neighborX_pos = neighbor->GetBlock(0, y, z); // local x is 0
+                    } else {
+                        neighborX_pos = BlockState(BlockType::Air); // No chunk, draw face
+                    }
+                } else neighborX_pos = GetBlock(x + 1, y, z); // Internal check
+                if (BlockDatabase::IsTransparent(neighborX_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({fx + 1, fy, fz + 1}, {fx + 1, fy, fz}, {fx + 1, fy + 1, fz}, {fx + 1, fy + 1, fz + 1},
+                    AddFace({wx + 1, fy,     wz + 1},
+                            {wx + 1, fy,     wz},
+                            {wx + 1, fy + 1, wz},
+                            {wx + 1, fy + 1, wz + 1},
                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Left Face (x-)
-                if (BlockDatabase::IsTransparent(GetBlock(x - 1, y, z))) {
+                BlockState neighborX_neg;
+                if (x - 1 < 0) {
+                    Chunk* neighbor = world.getChunk(cx - 1, cz);
+                    if (neighbor) {
+                        neighborX_neg = neighbor->GetBlock(CHUNK_WIDTH - 1, y, z); // local x is max
+                    } else {
+                        neighborX_neg = BlockState(BlockType::Air); // No chunk, draw face
+                    }
+                } else neighborX_neg = GetBlock(x - 1, y, z); // Internal check
+                if (BlockDatabase::IsTransparent(neighborX_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({fx, fy, fz}, {fx, fy, fz + 1}, {fx, fy + 1, fz + 1}, {fx, fy + 1, fz},
+                    AddFace({wx, fy,     wz},
+                            {wx, fy,     wz + 1},
+                            {wx, fy + 1, wz + 1},
+                            {wx, fy + 1, wz},
                             layer, uv1, uv2, uv3, uv4);
                 }
             }
         }
     }
-    m_VertexCount = m_MeshVertices.size() / 5; // 5 floats per vertex (x,y,z,u,v)
+
+    m_VertexCount = m_MeshVertices.size() / 6;
 }
