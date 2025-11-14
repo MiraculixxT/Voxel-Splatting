@@ -1,0 +1,40 @@
+#include <map>
+#include "game/Block.hpp"
+
+// Initialize static member
+std::map<BlockType, BlockTextureInfo> BlockDatabase::m_BlockTextures;
+
+void BlockDatabase::Init() {
+    // This mapping MUST match the order of files in Application::Init
+    // 0 = stone.png
+    // 1 = dirt.png
+    // 2 = grass_top.png
+    // 3 = grass_side.png
+
+    m_BlockTextures[BlockType::Stone] = {0, 0, 0}; // Top, Bottom, Side
+    m_BlockTextures[BlockType::Dirt]  = {1, 1, 1};
+    m_BlockTextures[BlockType::Grass] = {2, 1, 3}; // Top=grass_top, Bottom=dirt, Side=grass_side
+}
+
+float BlockDatabase::GetTextureLayer(BlockType type, BlockFace face) {
+    auto it = m_BlockTextures.find(type);
+    if (it == m_BlockTextures.end()) {
+        return 0.0f; // Default to stone if not found
+    }
+
+    switch (face) {
+        case BlockFace::Top:    return (float)it->second.top;
+        case BlockFace::Bottom: return (float)it->second.bottom;
+        case BlockFace::Side:   return (float)it->second.side;
+    }
+    return 0.0f;
+}
+
+bool BlockDatabase::IsTransparent(BlockType type) {
+    // For now, only Air is transparent.
+    return type == BlockType::Air;
+}
+
+bool BlockDatabase::IsTransparent(BlockState block) {
+    return IsTransparent(block.type);
+}
