@@ -17,6 +17,8 @@ struct BlockState {
 
     BlockState() : type(BlockType::Air) {}
     explicit BlockState(const BlockType type): type(type) {}
+
+    static BlockState getBasic(const BlockType type) { return BlockState(type); }
 };
 
 // Enum to identify which face of a block we're talking about
@@ -69,8 +71,3 @@ private:
     // Maps a BlockType to its set of texture indices (top, bottom, side)
     static std::map<BlockType, BlockTextureInfo> m_BlockTextures;
 };
-
-namespace BlockHelper {
-    inline BlockState getAir() { return BlockState(BlockType::Air); }
-    inline BlockState getBasic(const BlockType type) { return BlockState(type); }
-}
