@@ -10,6 +10,7 @@
 #include "glm/vec3.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "render/core/Camera.hpp"
+#include "render/core/GUIRenderer.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
 #include "render/gl/GLTextureUtils.hpp"
 #include "render/gl/GLShader.hpp"
@@ -24,10 +25,7 @@ Application::Application()
       m_FirstMouse(true),
       m_BlockShader(nullptr),
       m_ChunkRenderer(nullptr),
-      m_TextureArray(0),
-      m_GLFrom(0.1f),
-      m_GLTo(100.0f)
-{
+      m_TextureArray(0) {
 }
 
 Application::~Application() {
@@ -64,6 +62,7 @@ void Application::Init() {
         throw std::runtime_error("Failed to create GLFW window");
     }
     glfwMakeContextCurrent(m_Window);
+    glfwSwapInterval(1);
 
     // Store `this` pointer to be retrievable from C-style callbacks
     glfwSetWindowUserPointer(m_Window, this);
@@ -108,9 +107,9 @@ void Application::Init() {
 
     // --- 8. Create World/Chunk ---
     m_ChunkRenderer = new GLChunkRenderer();
-    for (auto [cx, column] : world.getChunks()) {
+    for (auto [cx, column] : m_World.getChunks()) {
         for (auto& [cy, chunk] : column) {
-            chunk.BuildMesh(world);
+            chunk.BuildMesh(m_World);
             m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
         }
     }
@@ -139,9 +138,24 @@ void Application::Run() {
     }
 }
 
+bool Application::WasKeyPressed(int key) {
+    const int current = glfwGetKey(m_Window, key);
+
+    int last = GLFW_RELEASE;
+    auto it = m_LastKeyStates.find(key);
+    if (it != m_LastKeyStates.end()) {
+        last = it->second;
+    }
+
+    m_LastKeyStates[key] = current;
+
+    // trigger only on edge: RELEASE -> PRESS
+    return (current == GLFW_PRESS && last == GLFW_RELEASE);
+}
+
 void Application::ProcessInput() {
-    if (glfwGetKey(m_Window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(m_Window, true);
+    if (WasKeyPressed(GLFW_KEY_ESCAPE))
+        m_InCamera = !m_InCamera;
 
     if (glfwGetKey(m_Window, GLFW_KEY_W) == GLFW_PRESS)
         m_Camera.ProcessKeyboard(FORWARD, m_DeltaTime);
@@ -173,7 +187,7 @@ void Application::Render() {
 
     // --- Draw World ---
     m_BlockShader->use();
-    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, m_GLFrom, m_GLTo);
+    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, m_Settings.GLFrom, m_Settings.GLTo);
     glm::mat4 view = m_Camera.GetViewMatrix();
     glm::mat4 model = glm::mat4(1.0f);
 
@@ -187,33 +201,14 @@ void Application::Render() {
     m_ChunkRenderer->Render();
 
     // --- Draw ImGui UI ---
-    ImGui::Begin("Debug Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-    ImGui::Text("Chunk Vertices: %d", m_ChunkRenderer->GetTotalVertexCount());
+    float xscale, yscale;
+    glfwGetWindowContentScale(m_Window, &xscale, &yscale);
+    ImGui::GetIO().FontGlobalScale = xscale;
 
-    if (ImGui::Button("Re-build Chunk")) {
-        m_ChunkRenderer->RemoveAllMeshes();
-        for (auto [cx, column] : world.getChunks()) {
-            for (auto& [cy, chunk] : column) {
-                chunk.BuildMesh(world);
-                m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
-                printf("DEBUG: Re-built chunk (%d, %d) with %d vertices\n", cx, cy, chunk.GetVertexCount());
-            }
-        }
-    }
-
-    ImGui::Text("----- CAMERA -----");
-    ImGui::Text("Pos: (%.1f, %.1f, %.1f)", m_Camera.Position.x, m_Camera.Position.y, m_Camera.Position.z);
-    ImGui::SliderFloat("Speed", &m_Camera.MovementSpeed, 1.0f, 20.0f);
-    ImGui::SliderFloat("FOV", &m_Camera.Zoom, 1.0f, 90.0f);
-
-    ImGui::Text("----- LAYERING -----");
-    ImGui::SliderFloat("GL From", &m_GLFrom, 0.01f, 50.0f);
-    ImGui::SliderFloat("GL To", &m_GLTo, m_GLFrom, 500.0f);
-
-    ImGui::End();
-
+    GUIRenderer::RenderStatsOverview(m_ChunkRenderer->GetTotalVertexCount());
+    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, m_ChunkRenderer, m_World);
     ImGui::Render();
+
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
@@ -246,7 +241,9 @@ void Application::OnMouseMove(double xpos, double ypos) {
         return;
     }
 
-    if (glfwGetMouseButton(m_Window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
+    // Capture mouse inputs: glfwGetMouseButton(m_Window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS
+
+    if (!m_InCamera) {
         m_FirstMouse = true;
         glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         return;

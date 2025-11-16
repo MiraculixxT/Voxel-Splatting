@@ -3,6 +3,7 @@
 #include "glad/glad.h" // REQUIRED for OpenGL to function, even if not used directly here
 #include <GLFW/glfw3.h>
 
+#include "game/Settings.hpp"
 #include "render/core/Camera.hpp"
 #include "game/World.hpp"
 #include "render/gl/GLShader.hpp"
@@ -33,6 +34,10 @@ private:
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xpos, double ypos);
 
+    // Single key press detection
+    bool WasKeyPressed(int key);
+    std::unordered_map<int, int> m_LastKeyStates;
+
     GLFWwindow* m_Window;
     Camera m_Camera;
 
@@ -44,16 +49,16 @@ private:
     float m_LastX;
     float m_LastY;
     bool m_FirstMouse;
+    bool m_InCamera = false;
 
     // World
-    World world;
+    World m_World;
 
     // Rendering
     GLShader* m_BlockShader;
     GLChunkRenderer* m_ChunkRenderer;
     unsigned int m_TextureArray;
 
-    // Render layering
-    float m_GLFrom;
-    float m_GLTo;
+    // Settings
+    Settings m_Settings;
 };
