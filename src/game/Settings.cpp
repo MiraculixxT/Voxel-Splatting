@@ -1,4 +1,4 @@
-#import "game/Settings.hpp"
+#include "game/Settings.hpp"
 
 Settings::Settings() {
 }
