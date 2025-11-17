@@ -29,7 +29,7 @@ void GUIRenderer::RenderStatsOverview(const double& vertexCount) {
 
 void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChunkRenderer* chunkRenderer, World& world) {
     constexpr ImGuiWindowFlags window_flags =
-        ImGuiWindowFlags_NoCollapse |       // Allow collapsing
+        ImGuiWindowFlags_NoCollapse |       // Prevent collapsing
         ImGuiWindowFlags_AlwaysAutoResize; // Auto-resize to fit content
 
     const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
