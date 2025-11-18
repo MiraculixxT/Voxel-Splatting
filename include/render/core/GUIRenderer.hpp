@@ -9,7 +9,7 @@ namespace GUIRenderer {
      * Top left corner.
      * Shows an overview of stats such as FPS, vertex count, etc.
      */
-    void RenderStatsOverview(const int& vertexCount);
+    void RenderStatsOverview(const std::size_t& vertexCount, const Camera& camera, const Settings& settings);
 
     /**
      * Renders the settings screen.

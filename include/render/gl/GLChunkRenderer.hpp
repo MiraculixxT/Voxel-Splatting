@@ -2,15 +2,18 @@
 
 #include <glad/glad.h>
 #include <vector>
-#include <map>
 #include <utility>
+
+#include "game/Settings.hpp"
+#include "render/core/Camera.hpp"
+#include "render/core/ViewFrustum.hpp"
 
 class GLChunkRenderer {
 public:
     // Define a coordinate type for the map key
     using ChunkCoord = std::pair<int, int>;
 
-    GLChunkRenderer();
+    explicit GLChunkRenderer(Camera& camera, Settings& settings);
     ~GLChunkRenderer();
 
     /**
@@ -37,12 +40,12 @@ public:
     /**
      * @brief Renders all loaded chunk meshes.
      */
-    void Render() const;
+    void Render(const ViewFrustum &frustum, const int &fromX, const int &toX, const int &fromZ, const int &toZ);
 
     /**
      * @brief Gets the total number of vertices in all managed chunk meshes.
      */
-    int GetTotalVertexCount() const;
+    std::size_t GetTotalVertexCount() const;
 
 private:
     // Struct to hold OpenGL buffer info for a single chunk
@@ -52,6 +55,20 @@ private:
         int vertexCount = 0;
     };
 
+    // Hash for the unordered map key
+    struct ChunkCoordHash {
+        std::size_t operator()(const std::pair<int, int>& k) const {
+            // Simple hash combination
+            return std::hash<int>{}(k.first) ^ (std::hash<int>{}(k.second) << 1);
+        }
+    };
+
     // Map to store meshes by coordinate
-    std::map<ChunkCoord, ChunkMesh> m_ChunkMeshes;
+    std::unordered_map<ChunkCoord, ChunkMesh, ChunkCoordHash> m_ChunkMeshes;
+
+    // Keeps track of the total loaded vertex count
+    std::size_t m_loadedVertexCount = 0;
+
+    Camera& m_Camera;
+    Settings& m_Settings;
 };

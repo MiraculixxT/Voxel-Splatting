@@ -2,9 +2,9 @@
 #include <string>
 
 namespace VSUtils {
-    static std::string NumberFormatThousands(const int& number) {
+    static std::string NumberFormatThousands(const std::size_t& number) {
         std::string numStr = std::to_string(number);
-        int insertPosition = numStr.length() - 3;
+        int insertPosition = static_cast<int>(numStr.length()) - 3;
         while (insertPosition > 0) {
             numStr.insert(insertPosition, ".");
             insertPosition -= 3;

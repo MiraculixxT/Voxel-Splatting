@@ -162,7 +162,7 @@ void Application::Render() {
     ImGui::GetIO().FontGlobalScale = xscale;
 
     auto& chunkRenderer = m_WorldRenderer.m_ChunkRenderer;
-    GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount());
+    GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount(), m_Camera, m_Settings);
     if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World);
     ImGui::Render();
 

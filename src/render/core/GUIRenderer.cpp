@@ -9,7 +9,7 @@
 #include "render/gl/GLChunkRenderer.hpp"
 #include "utils/Formatting.hpp"
 
-void GUIRenderer::RenderStatsOverview(const int& vertexCount) {
+void GUIRenderer::RenderStatsOverview(const std::size_t& vertexCount, const Camera& camera, const Settings& settings) {
     constexpr ImGuiWindowFlags window_flags =
         ImGuiWindowFlags_NoDecoration |       // No title bar, borders, etc.
         ImGuiWindowFlags_AlwaysAutoResize | // Auto-resize to fit content
@@ -23,8 +23,19 @@ void GUIRenderer::RenderStatsOverview(const int& vertexCount) {
 
     ImGui::Begin("Stats Overview", nullptr, window_flags);
 
+    // Graphic Info
     const std::string vertCountStr = VSUtils::NumberFormatThousands(vertexCount);
     ImGui::Text("FPS: %.1f | Frame Time: %.3fms | Verts: %s", ImGui::GetIO().Framerate, 1000.0f / ImGui::GetIO().Framerate, vertCountStr.c_str());
+
+    // GL Render info
+    const glm::vec3& pos = camera.Position;
+    const glm::ivec2 center(std::floor(camera.Position.x), std::floor(camera.Position.z));
+    const int renderDistance = std::floor(settings.GLTo);
+    const int fromX = (center.x - renderDistance) / CHUNK_WIDTH - 1;
+    const int toX   = (center.x + renderDistance) / CHUNK_WIDTH;
+    const int fromZ = (center.y - renderDistance) / CHUNK_WIDTH - 1;
+    const int toZ   = (center.y + renderDistance) / CHUNK_WIDTH;
+    ImGui::Text("XYZ: (%.1f,%.1f,%.1f) | Chunks: (%i,%i) -> (%i,%i)", pos.x, pos.y, pos.z, fromX, fromZ, toX, toZ);
 
     ImGui::End();
 }

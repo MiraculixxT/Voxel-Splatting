@@ -27,7 +27,7 @@ void GLWorldRenderer::Init() {
     m_BlockShader->setInt("textureArray", 0);
 
     // --- 8. Create World/Chunk ---
-    m_ChunkRenderer = new GLChunkRenderer();
+    m_ChunkRenderer = new GLChunkRenderer(m_Camera, m_Settings);
     for (auto [cx, column] : m_World.getChunks()) {
         for (auto& [cy, chunk] : column) {
             chunk.BuildMesh(m_World);
@@ -61,6 +61,15 @@ void GLWorldRenderer::RenderWorld() const {
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D_ARRAY, m_TextureArray);
 
-    m_ChunkRenderer->Render();
+    // Check from where to where we should render
+    ViewFrustum frustum;
+    frustum.Update(projection * view);
+    const glm::ivec2 center(std::floor(m_Camera.Position.x), std::floor(m_Camera.Position.z));
+    const int renderDistance = std::floor(m_Settings.GLTo);
+    const int fromX = (center.x - renderDistance) / CHUNK_WIDTH - 1;
+    const int toX   = (center.x + renderDistance) / CHUNK_WIDTH;
+    const int fromZ = (center.y - renderDistance) / CHUNK_WIDTH - 1;
+    const int toZ   = (center.y + renderDistance) / CHUNK_WIDTH;
+    m_ChunkRenderer->Render(frustum, fromX, toX, fromZ, toZ);
 }
 

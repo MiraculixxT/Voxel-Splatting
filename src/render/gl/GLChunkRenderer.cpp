@@ -1,6 +1,10 @@
 #include "render/gl/GLChunkRenderer.hpp"
 
-GLChunkRenderer::GLChunkRenderer() {
+#include "game/Chunk.hpp"
+#include "render/core/ViewFrustum.hpp"
+
+GLChunkRenderer::GLChunkRenderer(Camera& camera, Settings& settings)
+    : m_Camera(camera), m_Settings(settings) {
     // Maybe useful later
 }
 
@@ -83,25 +87,40 @@ void GLChunkRenderer::RemoveAllMeshes() {
 }
 
 
-void GLChunkRenderer::Render() const {
-    // Iterate over all stored meshes and render them
-    for (const auto& pair : m_ChunkMeshes) {
-        const ChunkMesh& mesh = pair.second;
+void GLChunkRenderer::Render(const ViewFrustum &frustum, const int &fromX, const int &toX, const int &fromZ, const int &toZ) {
+    m_loadedVertexCount = 0;
 
-        // Skip rendering if the chunk is empty
-        if (mesh.vertexCount == 0) continue;
+    // Iterate only the visible grid coordinates
+    for (int x = fromX; x <= toX; ++x) {
+        for (int z = fromZ; z <= toZ; ++z) {
 
-        glBindVertexArray(mesh.VAO);
-        glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+            // 1. Calculate World Bounds for this chunk
+            const glm::vec3 minBounds(x * CHUNK_WIDTH, 0.0f, z * CHUNK_WIDTH);
+            const glm::vec3 maxBounds((x + 1) * CHUNK_WIDTH, CHUNK_HEIGHT, (z + 1) * CHUNK_WIDTH);
+
+            // 2. Frustum Check: Skip if not visible
+            if (!frustum.IsBoxVisible(minBounds, maxBounds)) {
+                continue;
+            }
+
+            // Note: This should be O(1) with a fast hash, but maybe can be improved.
+            auto chunk = m_ChunkMeshes.find({x, z});
+
+            if (chunk != m_ChunkMeshes.end()) {
+                const auto& mesh = chunk->second;
+                if (mesh.vertexCount > 0) {
+                    m_loadedVertexCount += mesh.vertexCount;
+                    glBindVertexArray(mesh.VAO);
+                    glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+                }
+            }
+        }
     }
+
     // Unbind VAO once after all draw calls are done
     glBindVertexArray(0);
 }
 
-int GLChunkRenderer::GetTotalVertexCount() const {
-    int total = 0;
-    for (const auto& pair : m_ChunkMeshes) {
-        total += pair.second.vertexCount;
-    }
-    return total;
+std::size_t GLChunkRenderer::GetTotalVertexCount() const {
+    return m_loadedVertexCount;
 }
