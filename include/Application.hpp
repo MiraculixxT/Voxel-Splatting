@@ -6,8 +6,9 @@
 #include "game/Settings.hpp"
 #include "render/core/Camera.hpp"
 #include "game/World.hpp"
-#include "render/gl/GLShader.hpp"
-#include "render/gl/GLChunkRenderer.hpp"
+#include <unordered_map>
+
+#include "render/gl/GLWorldRenderer.hpp"
 
 // Constants
 const unsigned int SCR_WIDTH = 1280;
@@ -55,9 +56,7 @@ private:
     World m_World;
 
     // Rendering
-    GLShader* m_BlockShader;
-    GLChunkRenderer* m_ChunkRenderer;
-    unsigned int m_TextureArray;
+    GLWorldRenderer m_WorldRenderer;
 
     // Settings
     Settings m_Settings;

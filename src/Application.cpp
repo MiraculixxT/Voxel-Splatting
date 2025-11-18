@@ -8,12 +8,9 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "glm/vec3.hpp"
-#include "glm/ext/matrix_clip_space.hpp"
 #include "render/core/Camera.hpp"
 #include "render/core/GUIRenderer.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
-#include "render/gl/GLTextureUtils.hpp"
-#include "render/gl/GLShader.hpp"
 
 Application::Application()
     : m_Window(nullptr),
@@ -23,16 +20,12 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
-      m_BlockShader(nullptr),
-      m_ChunkRenderer(nullptr),
-      m_TextureArray(0) {
+      m_WorldRenderer(m_Camera, m_Settings, m_World)
+      {
 }
 
 Application::~Application() {
     // --- Cleanup ---
-    delete m_BlockShader;
-    delete m_ChunkRenderer;
-
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -90,29 +83,8 @@ void Application::Init() {
     // --- 6. Initialize BlockData ---
     BlockDatabase::Init();
 
-    // --- 7. Build Shaders and Load Textures ---
-    m_BlockShader = new GLShader("assets/shaders/block.vsh", "assets/shaders/block.fsh");
-
-    // Define the texture order. This MUST match BlockData::Init()
-    std::vector<std::string> textureFiles = {
-        "assets/textures/stone.png",       // i 0
-        "assets/textures/dirt.png",        // i 1
-        "assets/textures/grass_top.png",   // i 2
-        "assets/textures/grass_side.png"   // i 3
-    };
-    m_TextureArray = GLTextureUtils::LoadTexture2DArray(textureFiles);
-
-    m_BlockShader->use();
-    m_BlockShader->setInt("textureArray", 0);
-
-    // --- 8. Create World/Chunk ---
-    m_ChunkRenderer = new GLChunkRenderer();
-    for (auto [cx, column] : m_World.getChunks()) {
-        for (auto& [cy, chunk] : column) {
-            chunk.BuildMesh(m_World);
-            m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
-        }
-    }
+    // --- 7. Initialize World Renderer ---
+    m_WorldRenderer.Init();
 }
 
 void Application::Run() {
@@ -181,32 +153,17 @@ void Application::Render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // --- Clear Screen ---
-    glClearColor(0.5f, 0.8f, 1.0f, 1.0f); // Sky blue
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // --- Draw World ---
-    m_BlockShader->use();
-    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, m_Settings.GLFrom, m_Settings.GLTo);
-    glm::mat4 view = m_Camera.GetViewMatrix();
-    glm::mat4 model = glm::mat4(1.0f);
-
-    m_BlockShader->setMat4("projection", projection);
-    m_BlockShader->setMat4("view", view);
-    m_BlockShader->setMat4("model", model);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, m_TextureArray);
-
-    m_ChunkRenderer->Render();
+    // --- Render World ---
+    m_WorldRenderer.RenderWorld();
 
     // --- Draw ImGui UI ---
     float xscale, yscale;
     glfwGetWindowContentScale(m_Window, &xscale, &yscale);
     ImGui::GetIO().FontGlobalScale = xscale;
 
-    GUIRenderer::RenderStatsOverview(m_ChunkRenderer->GetTotalVertexCount());
-    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, m_ChunkRenderer, m_World);
+    auto& chunkRenderer = m_WorldRenderer.m_ChunkRenderer;
+    GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount());
+    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World);
     ImGui::Render();
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
