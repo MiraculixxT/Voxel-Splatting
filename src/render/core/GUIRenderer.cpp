@@ -74,7 +74,7 @@ void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChu
 
     ImGui::Text("----- CAMERA -----");
     ImGui::Text("Pos: (%.1f, %.1f, %.1f)", camera.Position.x, camera.Position.y, camera.Position.z);
-    ImGui::SliderFloat("Speed", &camera.MovementSpeed, 1.0f, 20.0f);
+    ImGui::SliderFloat("Speed", &camera.MovementSpeed, 1.0f, 100.0f);
     ImGui::SliderFloat("FOV", &camera.Zoom, 1.0f, 90.0f);
 
     ImGui::End();
