@@ -37,8 +37,7 @@ void GLWorldRenderer::Init() {
 
 }
 
-
-void GLWorldRenderer::RenderWorld() const {
+void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const is not possible
     // --- Clear Screen ---
     glClearColor(0.5f, 0.8f, 1.0f, 1.0f); // Sky blue
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);

@@ -3,6 +3,8 @@
 #include <glad/glad.h>
 #include <vector>
 #include <utility>
+#include <unordered_map>
+#include <functional>
 
 #include "game/Settings.hpp"
 #include "render/core/Camera.hpp"
@@ -40,7 +42,7 @@ public:
     /**
      * @brief Renders all loaded chunk meshes.
      */
-    void Render(const ViewFrustum &frustum, const int &fromX, const int &toX, const int &fromZ, const int &toZ);
+    void Render(const ViewFrustum &frustum, int fromX, int toX, int fromZ, int toZ);
 
     /**
      * @brief Gets the total number of vertices in all managed chunk meshes.
@@ -58,8 +60,8 @@ private:
     // Hash for the unordered map key
     struct ChunkCoordHash {
         std::size_t operator()(const std::pair<int, int>& k) const {
-            // Simple hash combination
-            return std::hash<int>{}(k.first) ^ (std::hash<int>{}(k.second) << 1);
+            // Boost-like pattern hash
+            return std::hash<int>{}(k.first) ^ (std::hash<int>{}(k.second) + 0x9e3779b9 + (std::hash<int>{}(k.first) << 6) + (std::hash<int>{}(k.first) >> 2));
         }
     };
 

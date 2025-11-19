@@ -30,7 +30,7 @@ private:
     void Render();
 
     // Callbacks
-    void OnFramebufferSize(int width, int height);
+    static void OnFramebufferSize(int width, int height);
     void OnMouseMove(double xpos, double ypos);
 
     // Static callback wrappers

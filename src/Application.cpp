@@ -2,7 +2,6 @@
 
 #include <iostream>
 #include <stdexcept>
-#include <string>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -94,7 +93,7 @@ void Application::Run() {
     // --- 8. Main Render Loop ---
     while (!glfwWindowShouldClose(m_Window)) {
         // --- Per-frame logic ---
-        float currentFrame = glfwGetTime();
+        const auto currentFrame = static_cast<float>(glfwGetTime());
         m_DeltaTime = currentFrame - m_LastFrame;
         m_LastFrame = currentFrame;
 
@@ -156,7 +155,7 @@ void Application::Render() {
     glfwGetWindowContentScale(m_Window, &xscale, &yscale);
     ImGui::GetIO().FontGlobalScale = xscale;
 
-    auto& chunkRenderer = m_WorldRenderer.m_ChunkRenderer;
+    const auto& chunkRenderer = m_WorldRenderer.GetChunkRenderer();
     GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount(), m_Camera, m_Settings);
     if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World);
     ImGui::Render();
@@ -166,28 +165,26 @@ void Application::Render() {
 
 // --- Static Callback Wrappers ---
 
-void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
-    Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (app) {
-        app->OnFramebufferSize(width, height);
+void Application::FramebufferSizeCallback(GLFWwindow* window, const int width, const int height) {
+    if (static_cast<Application*>(glfwGetWindowUserPointer(window))) {
+        OnFramebufferSize(width, height);
     }
 }
 
-void Application::MouseCallback(GLFWwindow* window, double xpos, double ypos) {
-    Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (app) {
+void Application::MouseCallback(GLFWwindow* window, const double xpos, const double ypos) {
+    if (auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
         app->OnMouseMove(xpos, ypos);
     }
 }
 
 // --- Member-function Callback Implementations ---
 
-void Application::OnFramebufferSize(int width, int height) {
+void Application::OnFramebufferSize(const int width, const int height) {
     glViewport(0, 0, width, height);
 }
 
-void Application::OnMouseMove(double xpos, double ypos) {
-    ImGuiIO& io = ImGui::GetIO();
+void Application::OnMouseMove(const double xpos, const double ypos) {
+    const ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse) {
         m_FirstMouse = true;
         return;
@@ -209,8 +206,8 @@ void Application::OnMouseMove(double xpos, double ypos) {
         m_FirstMouse = false;
     }
 
-    float xoffset = xpos - m_LastX;
-    float yoffset = m_LastY - ypos;
+    const float xoffset = xpos - m_LastX;
+    const float yoffset = m_LastY - ypos;
 
     m_LastX = xpos;
     m_LastY = ypos;

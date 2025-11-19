@@ -18,7 +18,7 @@ GLChunkRenderer::~GLChunkRenderer() {
 }
 
 void GLChunkRenderer::UploadMesh(int x, int y, const std::vector<float>& vertices) {
-    ChunkCoord coord = {x, y};
+    const ChunkCoord coord = {x, y};
 
     // Find or create the mesh entry
     ChunkMesh& mesh = m_ChunkMeshes[coord];
@@ -87,7 +87,7 @@ void GLChunkRenderer::RemoveAllMeshes() {
 }
 
 
-void GLChunkRenderer::Render(const ViewFrustum &frustum, const int &fromX, const int &toX, const int &fromZ, const int &toZ) {
+void GLChunkRenderer::Render(const ViewFrustum &frustum, const int fromX, const int toX, const int fromZ, const int toZ) {
     m_loadedVertexCount = 0;
 
     // Iterate only the visible grid coordinates
