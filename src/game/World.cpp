@@ -50,3 +50,24 @@ bool World::hasChunk(const int cx, const int cy) const {
     auto itY = itX->second.find(cy);
     return itY != itX->second.end();
 }
+
+BlockState World::getBlock(int wx, int wy, int wz) {
+    int cx = (wx >= 0) ? (wx / CHUNK_WIDTH) : ((wx - (CHUNK_WIDTH - 1)) / CHUNK_WIDTH);
+    int cy = (wz >= 0) ? (wz / CHUNK_WIDTH) : ((wz - (CHUNK_WIDTH - 1)) / CHUNK_WIDTH);
+
+    int bx = wx % CHUNK_WIDTH;
+    if (bx < 0) bx += CHUNK_WIDTH;
+    int bz = wz % CHUNK_WIDTH;
+    if (bz < 0) bz += CHUNK_WIDTH;
+
+    if (wy < 0 || wy >= CHUNK_HEIGHT) {
+        return BlockState(BlockType::Air);
+    }
+
+    Chunk* chunk = getChunk(cx, cy);
+    if (!chunk) {
+        return BlockState(BlockType::Air);
+    }
+
+    return chunk->GetBlock(bx, wy, bz);
+}

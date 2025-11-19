@@ -8,6 +8,8 @@
 #include "game/World.hpp"
 #include <unordered_map>
 
+#include "game/Player.hpp"
+
 #include "render/gl/GLWorldRenderer.hpp"
 
 // Constants
@@ -60,4 +62,5 @@ private:
 
     // Settings
     Settings m_Settings;
+    Player *m_Player;
 };

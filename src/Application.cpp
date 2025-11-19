@@ -11,6 +11,7 @@
 #include "render/core/Camera.hpp"
 #include "render/core/GUIRenderer.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
+#include "game/Player.hpp"
 
 Application::Application()
     : m_Window(nullptr),
@@ -20,7 +21,8 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
-      m_WorldRenderer(m_Camera, m_Settings, m_World)
+      m_WorldRenderer(m_Camera, m_Settings, m_World),
+      m_Player(nullptr)
       {
 }
 
@@ -85,6 +87,7 @@ void Application::Init() {
 
     // --- 7. Initialize World Renderer ---
     m_WorldRenderer.Init();
+    m_Player = new Player(&m_Camera, &m_World);
 }
 
 void Application::Run() {
@@ -129,21 +132,13 @@ void Application::ProcessInput() {
     if (WasKeyPressed(GLFW_KEY_ESCAPE))
         m_InCamera = !m_InCamera;
 
-    if (glfwGetKey(m_Window, GLFW_KEY_W) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(FORWARD, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_S) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(BACKWARD, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_A) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(LEFT, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_D) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(RIGHT, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(UP, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(DOWN, m_DeltaTime);
+    if (m_Player)
+        m_Player->ProcessInput(m_Window, m_DeltaTime);
 }
 
 void Application::Update() {
+    if (m_Player)
+        m_Player->Update(m_DeltaTime);
     // world ticking
 }
 
