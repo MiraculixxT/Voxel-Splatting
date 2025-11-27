@@ -19,6 +19,7 @@ public:
     float VelocityY = 0.0f;
     float Gravity = -35.0f;
     bool OnGround = false;
+    bool IsFlying = false;
 
     bool IsCollidingAt(const glm::vec3& pos) const;
     bool IsBlockSolid(int x, int y, int z) const;

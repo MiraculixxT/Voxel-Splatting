@@ -9,19 +9,19 @@
 #include <limits>
 
 Player::Player(Camera* camera, World* world)
-        : m_Camera(camera), m_World(world), Position(8.0f, 60.0f, 24.0f)
+        : Position(8.0f, 60.0f, 24.0f), m_Camera(camera), m_World(world)
 {
     m_Camera->Position = Position + glm::vec3(0,1.7f,0);
 }
 
-void Player::Update(float dt) {
-    ApplyGravity(dt);
+void Player::Update(const float dt) {
+    if (!IsFlying) ApplyGravity(dt);
 
     // Camera follows player
     m_Camera->Position = Position + glm::vec3(0, 1.7f, 0);
 }
 
-void Player::ProcessInput(GLFWwindow* window, float dt) {
+void Player::ProcessInput(GLFWwindow* window, const float dt) {
     ApplyMovement(window, dt);
 }
 
@@ -45,27 +45,38 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
         move += right;
 
     if (glm::length(move) > 0.0001f) {
-        move = glm::normalize(move) * Speed * dt;
+        // x5 speed on flying
+        move = glm::normalize(move) * (Speed + (IsFlying * Speed * 4)) * dt;
 
         // X axis
         glm::vec3 newPos = Position;
         newPos.x += move.x;
-        if (!IsCollidingAt(newPos)) {
+        if (IsFlying || !IsCollidingAt(newPos)) {
             Position.x = newPos.x;
         }
 
         // Z axis
         newPos = Position;
         newPos.z += move.z;
-        if (!IsCollidingAt(newPos)) {
+        if (IsFlying || !IsCollidingAt(newPos)) {
             Position.z = newPos.z;
         }
     }
 
     // Jump (only allowed when on ground, flag is set in gravity handling)
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && OnGround) {
-        VelocityY = 10.0f;
-        OnGround = false;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
+        if (IsFlying) {
+            Position.y += Speed * 2 * dt;
+        } else if (OnGround) {
+            VelocityY = 10.0f;
+            OnGround = false;
+        }
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+        if (IsFlying) {
+            Position.y -= Speed * 2 * dt;
+        }
     }
 }
 

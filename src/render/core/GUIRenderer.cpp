@@ -1,7 +1,10 @@
 #include "render/core/GUIRenderer.hpp"
 
 #include <cstdio>
+#include <iostream>
+
 #include "imgui.h"
+#include "game/Player.hpp"
 #include "game/Settings.hpp"
 #include "game/World.hpp"
 #include "GLFW/glfw3.h"
@@ -9,7 +12,7 @@
 #include "render/gl/GLChunkRenderer.hpp"
 #include "utils/Formatting.hpp"
 
-void GUIRenderer::RenderStatsOverview(const std::size_t& vertexCount, const Camera& camera, const Settings& settings) {
+void GUIRenderer::RenderStatsOverview(const std::size_t vertexCount, const Camera& camera, const Settings& settings) {
     constexpr ImGuiWindowFlags window_flags =
         ImGuiWindowFlags_NoDecoration |       // No title bar, borders, etc.
         ImGuiWindowFlags_AlwaysAutoResize | // Auto-resize to fit content
@@ -40,7 +43,7 @@ void GUIRenderer::RenderStatsOverview(const std::size_t& vertexCount, const Came
     ImGui::End();
 }
 
-void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChunkRenderer* chunkRenderer, World& world) {
+void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChunkRenderer* chunkRenderer, World& world, Player* player) {
     constexpr ImGuiWindowFlags window_flags =
         ImGuiWindowFlags_NoCollapse |       // Prevent collapsing
         ImGuiWindowFlags_AlwaysAutoResize; // Auto-resize to fit content
@@ -61,6 +64,7 @@ void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChu
             }
         }
     }
+    ImGui::Checkbox("Fly Mode", &player->IsFlying);
 
     ImGui::Text("----- GRAPHICS -----");
     if (ImGui::Checkbox("VSync", &settings.VSync))

@@ -157,7 +157,7 @@ void Application::Render() {
 
     const auto& chunkRenderer = m_WorldRenderer.GetChunkRenderer();
     GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount(), m_Camera, m_Settings);
-    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World);
+    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World, m_Player);
     ImGui::Render();
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -166,8 +166,8 @@ void Application::Render() {
 // --- Static Callback Wrappers ---
 
 void Application::FramebufferSizeCallback(GLFWwindow* window, const int width, const int height) {
-    if (static_cast<Application*>(glfwGetWindowUserPointer(window))) {
-        OnFramebufferSize(width, height);
+    if (const auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
+        app->OnFramebufferSize(width, height);
     }
 }
 
