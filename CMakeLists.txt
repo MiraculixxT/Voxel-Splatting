@@ -88,7 +88,6 @@ file(GLOB_RECURSE GAME_HEADERS CONFIGURE_DEPENDS "include/*.h" "include/*.hpp")
 add_executable(VoxelSplatting
         ${GAME_SOURCES}
         ${GAME_HEADERS}
-        src/game/Player.cpp
 )
 target_include_directories(VoxelSplatting PRIVATE include)
 

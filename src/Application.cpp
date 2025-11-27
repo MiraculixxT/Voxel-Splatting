@@ -27,6 +27,8 @@ Application::Application()
 
 Application::~Application() {
     // --- Cleanup ---
+    delete m_Player;
+    m_Player = nullptr;
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -80,6 +82,7 @@ void Application::Init() {
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(m_Window, true);
     ImGui_ImplOpenGL3_Init("#version 410");
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
 
     // --- 6. Initialize BlockData ---
     BlockDatabase::Init();
@@ -87,6 +90,12 @@ void Application::Init() {
     // --- 7. Initialize World Renderer ---
     m_WorldRenderer.Init();
     m_Player = new Player(&m_Camera, &m_World);
+
+    // --- 8. FIX: Force Initial Viewport Update ---
+    // Wayland/KDE often initializes with different Window vs Framebuffer sizes.
+    int width, height;
+    glfwGetFramebufferSize(m_Window, &width, &height);
+    OnFramebufferSize(width, height);
 }
 
 void Application::Run() {
@@ -128,8 +137,11 @@ bool Application::WasKeyPressed(int key) {
 }
 
 void Application::ProcessInput() {
-    if (WasKeyPressed(GLFW_KEY_ESCAPE))
+    if (WasKeyPressed(GLFW_KEY_ESCAPE)) {
         m_InCamera = !m_InCamera;
+        Camera::SetCameraMode(m_InCamera, m_Window);
+    }
+
 
     if (m_Player)
         m_Player->ProcessInput(m_Window, m_DeltaTime);
@@ -184,22 +196,13 @@ void Application::OnFramebufferSize(const int width, const int height) {
 }
 
 void Application::OnMouseMove(const double xpos, const double ypos) {
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantCaptureMouse) {
-        m_FirstMouse = true;
-        return;
-    }
+    // 1. If ImGui owns the mouse, do nothing
+    if (ImGui::GetIO().WantCaptureMouse) return;
 
-    // Capture mouse inputs: glfwGetMouseButton(m_Window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS
+    // 2. If we aren't in camera mode, do nothing
+    if (!m_InCamera) return;
 
-    if (!m_InCamera) {
-        m_FirstMouse = true;
-        glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        return;
-    }
-
-    glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-
+    // 3. Standard Movement Logic
     if (m_FirstMouse) {
         m_LastX = xpos;
         m_LastY = ypos;

@@ -4,6 +4,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "GLFW/glfw3.h"
+
 // Defines several possible options for camera movement.
 enum Camera_Movement {
     FORWARD,
@@ -45,6 +47,7 @@ public:
     void ProcessKeyboard(Camera_Movement direction, float deltaTime);
     void ProcessMouseMovement(float xoffset, float yoffset, GLboolean constrainPitch = true);
     void ProcessMouseScroll(float yoffset);
+    static void SetCameraMode(bool cameraMode, GLFWwindow* window);
 
 private:
     void updateCameraVectors();
