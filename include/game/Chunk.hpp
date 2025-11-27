@@ -7,7 +7,6 @@
 // Define chunk dimensions.
 constexpr int CHUNK_WIDTH = 16;
 constexpr int CHUNK_HEIGHT = 256;
-constexpr int CHUNK_DEPTH = 16;
 
 // Forward declare World to avoid a circular dependency
 class World;
@@ -76,7 +75,7 @@ private:
                  const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
 
     // 3D array of blocks [x][y][z]
-    BlockState m_Blocks[CHUNK_WIDTH][CHUNK_HEIGHT][CHUNK_DEPTH];
+    BlockState m_Blocks[CHUNK_WIDTH][CHUNK_HEIGHT][CHUNK_WIDTH];
 
     // Render data
     std::vector<float> m_MeshVertices;

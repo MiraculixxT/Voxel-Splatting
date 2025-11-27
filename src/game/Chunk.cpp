@@ -15,7 +15,7 @@ Chunk::Chunk(const int cx, const int cz) : cx(cx), cz(cz), m_Blocks{}, m_VertexC
     // Initialize all blocks to Air
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int y = 0; y < CHUNK_HEIGHT; ++y) {
-            for (int z = 0; z < CHUNK_DEPTH; ++z) {
+            for (int z = 0; z < CHUNK_WIDTH; ++z) {
                 m_Blocks[x][y][z] = BlockState();
             }
         }
@@ -28,9 +28,9 @@ Chunk::~Chunk() {
 
 void Chunk::GenerateSimpleTerrain() {
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
-        for (int z = 0; z < CHUNK_DEPTH; ++z) {
+        for (int z = 0; z < CHUNK_WIDTH; ++z) {
             const int dx = x + cx * CHUNK_WIDTH;
-            const int dz = z + cz * CHUNK_DEPTH;
+            const int dz = z + cz * CHUNK_WIDTH;
             int height = static_cast<int>(simpleNoise(dx, dz));
             height = glm::clamp(height, 1, CHUNK_HEIGHT - 1);
 
@@ -52,7 +52,7 @@ BlockState Chunk::GetBlock(int x, int y, int z) const {
     // Check bounds. If out of bounds, return Air (so faces are drawn at chunk borders)
     if (x < 0 || x >= CHUNK_WIDTH ||
         y < 0 || y >= CHUNK_HEIGHT ||
-        z < 0 || z >= CHUNK_DEPTH) {
+        z < 0 || z >= CHUNK_WIDTH) {
         return BlockState(BlockType::Air);
     }
     return m_Blocks[x][y][z];
@@ -61,7 +61,7 @@ BlockState Chunk::GetBlock(int x, int y, int z) const {
 void Chunk::SetBlock(int x, int y, int z, BlockState type) {
     if (x < 0 || x >= CHUNK_WIDTH ||
         y < 0 || y >= CHUNK_HEIGHT ||
-        z < 0 || z >= CHUNK_DEPTH) {
+        z < 0 || z >= CHUNK_WIDTH) {
         return; // Out of bounds
     }
     m_Blocks[x][y][z] = type;
@@ -108,11 +108,11 @@ void Chunk::BuildMesh(World &world) {
 
     // World offset of this chunk
     const auto worldOffsetX = static_cast<float>(cx * CHUNK_WIDTH);
-    const auto worldOffsetZ = static_cast<float>(cz * CHUNK_DEPTH);
+    const auto worldOffsetZ = static_cast<float>(cz * CHUNK_WIDTH);
 
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int y = 0; y < CHUNK_HEIGHT; ++y) {
-            for (int z = 0; z < CHUNK_DEPTH; ++z) {
+            for (int z = 0; z < CHUNK_WIDTH; ++z) {
                 BlockState currentBlock = m_Blocks[x][y][z];
                 BlockType currentType = currentBlock.type;
                 if (BlockDatabase::IsTransparent(currentType)) {
@@ -150,7 +150,7 @@ void Chunk::BuildMesh(World &world) {
 
                 // Front Face (z+)
                 BlockState neighborZ_pos;
-                if (z + 1 >= CHUNK_DEPTH) {
+                if (z + 1 >= CHUNK_WIDTH) {
                     if (Chunk* neighbor = world.getChunk(cx, cz + 1)) {
                         neighborZ_pos = neighbor->GetBlock(x, y, 0); // local z is 0
                     } else {
@@ -171,7 +171,7 @@ void Chunk::BuildMesh(World &world) {
                 if (z - 1 < 0) {
                     Chunk* neighbor = world.getChunk(cx, cz - 1);
                     if (neighbor) {
-                        neighborZ_neg = neighbor->GetBlock(x, y, CHUNK_DEPTH - 1); // local z is max
+                        neighborZ_neg = neighbor->GetBlock(x, y, CHUNK_WIDTH - 1); // local z is max
                     } else {
                         neighborZ_neg = BlockState(BlockType::Air); // No chunk, draw face
                     }

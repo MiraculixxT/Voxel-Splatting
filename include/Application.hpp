@@ -3,10 +3,14 @@
 #include "glad/glad.h" // REQUIRED for OpenGL to function, even if not used directly here
 #include <GLFW/glfw3.h>
 
+#include "game/Settings.hpp"
 #include "render/core/Camera.hpp"
 #include "game/World.hpp"
-#include "render/gl/GLShader.hpp"
-#include "render/gl/GLChunkRenderer.hpp"
+#include <unordered_map>
+
+#include "game/Player.hpp"
+
+#include "render/gl/GLWorldRenderer.hpp"
 
 // Constants
 const unsigned int SCR_WIDTH = 1280;
@@ -26,12 +30,16 @@ private:
     void Render();
 
     // Callbacks
-    void OnFramebufferSize(int width, int height);
+    static void OnFramebufferSize(int width, int height);
     void OnMouseMove(double xpos, double ypos);
 
     // Static callback wrappers
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void MouseCallback(GLFWwindow* window, double xpos, double ypos);
+
+    // Single key press detection
+    bool WasKeyPressed(int key);
+    std::unordered_map<int, int> m_LastKeyStates;
 
     GLFWwindow* m_Window;
     Camera m_Camera;
@@ -44,16 +52,15 @@ private:
     float m_LastX;
     float m_LastY;
     bool m_FirstMouse;
+    bool m_InCamera = false;
 
     // World
-    World world;
+    World m_World;
 
     // Rendering
-    GLShader* m_BlockShader;
-    GLChunkRenderer* m_ChunkRenderer;
-    unsigned int m_TextureArray;
+    GLWorldRenderer m_WorldRenderer;
 
-    // Render layering
-    float m_GLFrom;
-    float m_GLTo;
+    // Settings
+    Settings m_Settings;
+    Player *m_Player;
 };

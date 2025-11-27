@@ -2,17 +2,15 @@
 
 #include <iostream>
 #include <stdexcept>
-#include <string>
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "glm/vec3.hpp"
-#include "glm/ext/matrix_clip_space.hpp"
 #include "render/core/Camera.hpp"
+#include "render/core/GUIRenderer.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
-#include "render/gl/GLTextureUtils.hpp"
-#include "render/gl/GLShader.hpp"
+#include "game/Player.hpp"
 
 Application::Application()
     : m_Window(nullptr),
@@ -22,19 +20,13 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
-      m_BlockShader(nullptr),
-      m_ChunkRenderer(nullptr),
-      m_TextureArray(0),
-      m_GLFrom(0.1f),
-      m_GLTo(100.0f)
-{
+      m_WorldRenderer(m_Camera, m_Settings, m_World),
+      m_Player(nullptr)
+      {
 }
 
 Application::~Application() {
     // --- Cleanup ---
-    delete m_BlockShader;
-    delete m_ChunkRenderer;
-
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -64,6 +56,7 @@ void Application::Init() {
         throw std::runtime_error("Failed to create GLFW window");
     }
     glfwMakeContextCurrent(m_Window);
+    glfwSwapInterval(1);
 
     // Store `this` pointer to be retrievable from C-style callbacks
     glfwSetWindowUserPointer(m_Window, this);
@@ -91,36 +84,16 @@ void Application::Init() {
     // --- 6. Initialize BlockData ---
     BlockDatabase::Init();
 
-    // --- 7. Build Shaders and Load Textures ---
-    m_BlockShader = new GLShader("assets/shaders/block.vsh", "assets/shaders/block.fsh");
-
-    // Define the texture order. This MUST match BlockData::Init()
-    std::vector<std::string> textureFiles = {
-        "assets/textures/stone.png",       // i 0
-        "assets/textures/dirt.png",        // i 1
-        "assets/textures/grass_top.png",   // i 2
-        "assets/textures/grass_side.png"   // i 3
-    };
-    m_TextureArray = GLTextureUtils::LoadTexture2DArray(textureFiles);
-
-    m_BlockShader->use();
-    m_BlockShader->setInt("textureArray", 0);
-
-    // --- 8. Create World/Chunk ---
-    m_ChunkRenderer = new GLChunkRenderer();
-    for (auto [cx, column] : world.getChunks()) {
-        for (auto& [cy, chunk] : column) {
-            chunk.BuildMesh(world);
-            m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
-        }
-    }
+    // --- 7. Initialize World Renderer ---
+    m_WorldRenderer.Init();
+    m_Player = new Player(&m_Camera, &m_World);
 }
 
 void Application::Run() {
     // --- 8. Main Render Loop ---
     while (!glfwWindowShouldClose(m_Window)) {
         // --- Per-frame logic ---
-        float currentFrame = glfwGetTime();
+        const auto currentFrame = static_cast<float>(glfwGetTime());
         m_DeltaTime = currentFrame - m_LastFrame;
         m_LastFrame = currentFrame;
 
@@ -139,25 +112,32 @@ void Application::Run() {
     }
 }
 
-void Application::ProcessInput() {
-    if (glfwGetKey(m_Window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(m_Window, true);
+bool Application::WasKeyPressed(int key) {
+    const int current = glfwGetKey(m_Window, key);
 
-    if (glfwGetKey(m_Window, GLFW_KEY_W) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(FORWARD, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_S) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(BACKWARD, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_A) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(LEFT, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_D) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(RIGHT, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_SPACE) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(UP, m_DeltaTime);
-    if (glfwGetKey(m_Window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
-        m_Camera.ProcessKeyboard(DOWN, m_DeltaTime);
+    int last = GLFW_RELEASE;
+    auto it = m_LastKeyStates.find(key);
+    if (it != m_LastKeyStates.end()) {
+        last = it->second;
+    }
+
+    m_LastKeyStates[key] = current;
+
+    // trigger only on edge: RELEASE -> PRESS
+    return (current == GLFW_PRESS && last == GLFW_RELEASE);
+}
+
+void Application::ProcessInput() {
+    if (WasKeyPressed(GLFW_KEY_ESCAPE))
+        m_InCamera = !m_InCamera;
+
+    if (m_Player)
+        m_Player->ProcessInput(m_Window, m_DeltaTime);
 }
 
 void Application::Update() {
+    if (m_Player)
+        m_Player->Update(m_DeltaTime);
     // world ticking
 }
 
@@ -167,86 +147,52 @@ void Application::Render() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // --- Clear Screen ---
-    glClearColor(0.5f, 0.8f, 1.0f, 1.0f); // Sky blue
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-    // --- Draw World ---
-    m_BlockShader->use();
-    glm::mat4 projection = glm::perspective(glm::radians(m_Camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, m_GLFrom, m_GLTo);
-    glm::mat4 view = m_Camera.GetViewMatrix();
-    glm::mat4 model = glm::mat4(1.0f);
-
-    m_BlockShader->setMat4("projection", projection);
-    m_BlockShader->setMat4("view", view);
-    m_BlockShader->setMat4("model", model);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, m_TextureArray);
-
-    m_ChunkRenderer->Render();
+    // --- Render World ---
+    m_WorldRenderer.RenderWorld();
 
     // --- Draw ImGui UI ---
-    ImGui::Begin("Debug Info", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-    ImGui::Text("Chunk Vertices: %d", m_ChunkRenderer->GetTotalVertexCount());
+    float xscale, yscale;
+    glfwGetWindowContentScale(m_Window, &xscale, &yscale);
+    ImGui::GetIO().FontGlobalScale = xscale;
 
-    if (ImGui::Button("Re-build Chunk")) {
-        m_ChunkRenderer->RemoveAllMeshes();
-        for (auto [cx, column] : world.getChunks()) {
-            for (auto& [cy, chunk] : column) {
-                chunk.BuildMesh(world);
-                m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
-                printf("DEBUG: Re-built chunk (%d, %d) with %d vertices\n", cx, cy, chunk.GetVertexCount());
-            }
-        }
-    }
-
-    ImGui::Text("----- CAMERA -----");
-    ImGui::Text("Pos: (%.1f, %.1f, %.1f)", m_Camera.Position.x, m_Camera.Position.y, m_Camera.Position.z);
-    ImGui::SliderFloat("Speed", &m_Camera.MovementSpeed, 1.0f, 20.0f);
-    ImGui::SliderFloat("FOV", &m_Camera.Zoom, 1.0f, 90.0f);
-
-    ImGui::Text("----- LAYERING -----");
-    ImGui::SliderFloat("GL From", &m_GLFrom, 0.01f, 50.0f);
-    ImGui::SliderFloat("GL To", &m_GLTo, m_GLFrom, 500.0f);
-
-    ImGui::End();
-
+    const auto& chunkRenderer = m_WorldRenderer.GetChunkRenderer();
+    GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount(), m_Camera, m_Settings);
+    if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World, m_Player);
     ImGui::Render();
+
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
 // --- Static Callback Wrappers ---
 
-void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
-    Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (app) {
+void Application::FramebufferSizeCallback(GLFWwindow* window, const int width, const int height) {
+    if (const auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
         app->OnFramebufferSize(width, height);
     }
 }
 
-void Application::MouseCallback(GLFWwindow* window, double xpos, double ypos) {
-    Application* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (app) {
+void Application::MouseCallback(GLFWwindow* window, const double xpos, const double ypos) {
+    if (auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
         app->OnMouseMove(xpos, ypos);
     }
 }
 
 // --- Member-function Callback Implementations ---
 
-void Application::OnFramebufferSize(int width, int height) {
+void Application::OnFramebufferSize(const int width, const int height) {
     glViewport(0, 0, width, height);
 }
 
-void Application::OnMouseMove(double xpos, double ypos) {
-    ImGuiIO& io = ImGui::GetIO();
+void Application::OnMouseMove(const double xpos, const double ypos) {
+    const ImGuiIO& io = ImGui::GetIO();
     if (io.WantCaptureMouse) {
         m_FirstMouse = true;
         return;
     }
 
-    if (glfwGetMouseButton(m_Window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
+    // Capture mouse inputs: glfwGetMouseButton(m_Window, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS
+
+    if (!m_InCamera) {
         m_FirstMouse = true;
         glfwSetInputMode(m_Window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
         return;
@@ -260,8 +206,8 @@ void Application::OnMouseMove(double xpos, double ypos) {
         m_FirstMouse = false;
     }
 
-    float xoffset = xpos - m_LastX;
-    float yoffset = m_LastY - ypos;
+    const float xoffset = xpos - m_LastX;
+    const float yoffset = m_LastY - ypos;
 
     m_LastX = xpos;
     m_LastY = ypos;

@@ -27,6 +27,7 @@ public:
     const ChunkStorage& getChunks() const { return chunks; }
     ChunkStorage& getChunks() { return chunks; }
 
+    BlockState getBlock(int wx, int wy, int wz);
 
 private:
     ChunkStorage chunks;
