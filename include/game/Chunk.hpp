@@ -56,6 +56,12 @@ public:
     void BuildMesh(World& world);
 
     /**
+     * Asynchronous version of BuildMesh.
+     * @param blockGetter callback to avoid using world reference in async context
+     */
+    void BuildMesh(const std::function<BlockState(int, int, int)>& blockGetter);
+
+    /**
      * @brief Gets the generated mesh vertices after BuildMesh() is called.
      * Vertex format is (x, y, z, u, v, layer) - 6 floats.
      */

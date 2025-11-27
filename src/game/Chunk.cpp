@@ -4,13 +4,6 @@
 #include "game/World.hpp"
 #include "glm/gtc/noise.hpp"
 
-// Simple noise function for terrain debugging
-float simpleNoise(int x, int z) {
-    return (glm::simplex(glm::vec2(x * 0.02f, z * 0.02f)) * 10.0f + 10.0f) +
-           (glm::simplex(glm::vec2(x * 0.1f, z * 0.1f)) * 2.0f + 2.0f) +
-           32.0f; // Base level
-}
-
 Chunk::Chunk(const int cx, const int cz) : cx(cx), cz(cz), m_Blocks{}, m_VertexCount(0) {
     // Initialize all blocks to Air
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
@@ -31,18 +24,18 @@ void Chunk::GenerateSimpleTerrain() {
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
             const int dx = x + cx * CHUNK_WIDTH;
             const int dz = z + cz * CHUNK_WIDTH;
-            int height = static_cast<int>(simpleNoise(dx, dz));
-            height = glm::clamp(height, 1, CHUNK_HEIGHT - 1);
 
+            bool foundSurface = false;
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
-                if (y < height - 3)
-                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Stone);
-                else if (y < height)
-                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Dirt);
-                else if (y == height)
-                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Grass);
-                else
-                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Air);
+                if (foundSurface) {
+                    m_Blocks[x][y][z] = BlockState(BlockType::Air);
+                    continue;
+                }
+                const auto block = ChunkManager::GlobalTerrainFunction(dx, y, dz);
+                m_Blocks[x][y][z] = block;
+                if (block.type == BlockType::Air) {
+                    foundSurface = true;
+                }
             }
         }
     }
@@ -95,8 +88,13 @@ void Chunk::AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p
     m_MeshVertices.push_back(uv4.x); m_MeshVertices.push_back(uv4.y); m_MeshVertices.push_back(textureLayer);
 }
 
-
 void Chunk::BuildMesh(World &world) {
+    BuildMesh([&world](const int x, const int y, const int z) {
+        return world.getBlock(x, y, z);
+    });
+}
+
+void Chunk::BuildMesh(const std::function<BlockState(int, int, int)>& blockGetter) {
     m_MeshVertices.clear();
     m_VertexCount = 0;
 
@@ -120,9 +118,9 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Local voxel coords
-                const float fx = static_cast<float>(x);
-                const float fy = static_cast<float>(y);
-                const float fz = static_cast<float>(z);
+                const auto fx = static_cast<float>(x);
+                const auto fy = static_cast<float>(y);
+                const auto fz = static_cast<float>(z);
 
                 // Add chunk offset to get world coords
                 const float wx = fx + worldOffsetX;
@@ -130,7 +128,7 @@ void Chunk::BuildMesh(World &world) {
 
                 // Top Face (y+)
                 if (BlockDatabase::IsTransparent(GetBlock(x, y + 1, z))) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Top);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Top);
                     AddFace({wx,     fy + 1, wz},
                             {wx,     fy + 1, wz + 1},
                             {wx + 1, fy + 1, wz + 1},
@@ -140,7 +138,7 @@ void Chunk::BuildMesh(World &world) {
 
                 // Bottom Face (y-)
                 if (BlockDatabase::IsTransparent(GetBlock(x, y - 1, z))) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Bottom);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Bottom);
                     AddFace({wx,     fy, wz},
                             {wx + 1, fy, wz},
                             {wx + 1, fy, wz + 1},
@@ -149,16 +147,11 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Front Face (z+)
-                BlockState neighborZ_pos;
-                if (z + 1 >= CHUNK_WIDTH) {
-                    if (Chunk* neighbor = world.getChunk(cx, cz + 1)) {
-                        neighborZ_pos = neighbor->GetBlock(x, y, 0); // local z is 0
-                    } else {
-                        neighborZ_pos = BlockState(BlockType::Air); // No chunk, draw face
-                    }
-                } else neighborZ_pos = GetBlock(x, y, z + 1); // Internal check
+                const BlockState neighborZ_pos = (z + 1 < CHUNK_WIDTH)
+                                 ? m_Blocks[x][y][z+1]
+                                 : blockGetter(this->cx * CHUNK_WIDTH + x, y, this->cz * CHUNK_WIDTH + z + 1);
                 if (BlockDatabase::IsTransparent(neighborZ_pos)) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx,     fy,     wz + 1},
                             {wx + 1, fy,     wz + 1},
                             {wx + 1, fy + 1, wz + 1},
@@ -167,17 +160,11 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Back Face (z-)
-                BlockState neighborZ_neg;
-                if (z - 1 < 0) {
-                    Chunk* neighbor = world.getChunk(cx, cz - 1);
-                    if (neighbor) {
-                        neighborZ_neg = neighbor->GetBlock(x, y, CHUNK_WIDTH - 1); // local z is max
-                    } else {
-                        neighborZ_neg = BlockState(BlockType::Air); // No chunk, draw face
-                    }
-                } else neighborZ_neg = GetBlock(x, y, z - 1); // Internal check
+                const BlockState neighborZ_neg = (z - 1 < CHUNK_WIDTH)
+                                 ? m_Blocks[x][y][z-1]
+                                 : blockGetter(this->cx * CHUNK_WIDTH + x, y, this->cz * CHUNK_WIDTH + z - 1);
                 if (BlockDatabase::IsTransparent(neighborZ_neg)) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx + 1, fy,     wz},
                             {wx,     fy,     wz},
                             {wx,     fy + 1, wz},
@@ -186,17 +173,11 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Right Face (x+)
-                BlockState neighborX_pos;
-                if (x + 1 >= CHUNK_WIDTH) {
-                    Chunk* neighbor = world.getChunk(cx + 1, cz);
-                    if (neighbor) {
-                        neighborX_pos = neighbor->GetBlock(0, y, z); // local x is 0
-                    } else {
-                        neighborX_pos = BlockState(BlockType::Air); // No chunk, draw face
-                    }
-                } else neighborX_pos = GetBlock(x + 1, y, z); // Internal check
+                const BlockState neighborX_pos = (x + 1 < CHUNK_WIDTH)
+                                 ? m_Blocks[x+1][y][z]
+                                 : blockGetter(this->cx * CHUNK_WIDTH + x + 1, y, this->cz * CHUNK_WIDTH + z);
                 if (BlockDatabase::IsTransparent(neighborX_pos)) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx + 1, fy,     wz + 1},
                             {wx + 1, fy,     wz},
                             {wx + 1, fy + 1, wz},
@@ -205,17 +186,11 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Left Face (x-)
-                BlockState neighborX_neg;
-                if (x - 1 < 0) {
-                    Chunk* neighbor = world.getChunk(cx - 1, cz);
-                    if (neighbor) {
-                        neighborX_neg = neighbor->GetBlock(CHUNK_WIDTH - 1, y, z); // local x is max
-                    } else {
-                        neighborX_neg = BlockState(BlockType::Air); // No chunk, draw face
-                    }
-                } else neighborX_neg = GetBlock(x - 1, y, z); // Internal check
+                const BlockState neighborX_neg = (x - 1 < CHUNK_WIDTH)
+                                 ? m_Blocks[x-1][y][z]
+                                 : blockGetter(this->cx * CHUNK_WIDTH + x - 1, y, this->cz * CHUNK_WIDTH + z);
                 if (BlockDatabase::IsTransparent(neighborX_neg)) {
-                    float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
+                    const float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx, fy,     wz},
                             {wx, fy,     wz + 1},
                             {wx, fy + 1, wz + 1},

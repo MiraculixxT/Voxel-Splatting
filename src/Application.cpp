@@ -20,6 +20,7 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
+      m_World(m_Settings, m_WorldRenderer),
       m_WorldRenderer(m_Camera, m_Settings, m_World),
       m_Player(nullptr)
       {
@@ -90,6 +91,7 @@ void Application::Init() {
     // --- 7. Initialize World Renderer ---
     m_WorldRenderer.Init();
     m_Player = new Player(&m_Camera, &m_World);
+    m_World.setPlayer(m_Player);
 
     // --- 8. FIX: Force Initial Viewport Update ---
     // Wayland/KDE often initializes with different Window vs Framebuffer sizes.
@@ -99,18 +101,34 @@ void Application::Init() {
 }
 
 void Application::Run() {
+    // Fixed TPS
+    const double dt = 1.0 / 20.0;
+    double accumulator = 0.0;
+
     // --- 8. Main Render Loop ---
     while (!glfwWindowShouldClose(m_Window)) {
         // --- Per-frame logic ---
-        const auto currentFrame = static_cast<float>(glfwGetTime());
-        m_DeltaTime = currentFrame - m_LastFrame;
-        m_LastFrame = currentFrame;
+        const double currentFrame = glfwGetTime();
+        double frameTime = currentFrame - m_LastFrame; // frame delta
+        m_LastFrame = static_cast<float>(currentFrame);
+
+        // Prevent spiral of death if frame time is too long
+        if (frameTime > 0.25) frameTime = 0.25;
+
+        m_DeltaTime = static_cast<float>(frameTime);
+        accumulator += frameTime;
 
         // --- Input ---
         ProcessInput();
 
-        // --- Update ---
+        // --- Lazy Update (Player) ---
         Update();
+
+        // --- Fixed Update (Physics & World Gen) ---
+        while (accumulator >= dt) {
+            UpdateFixed();
+            accumulator -= dt;
+        }
 
         // --- Render ---
         Render();
@@ -150,7 +168,11 @@ void Application::ProcessInput() {
 void Application::Update() {
     if (m_Player)
         m_Player->Update(m_DeltaTime);
+}
+
+void Application::UpdateFixed() {
     // world ticking
+    m_World.tick();
 }
 
 void Application::Render() {
