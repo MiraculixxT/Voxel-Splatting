@@ -46,7 +46,7 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
 
     if (glm::length(move) > 0.0001f) {
         // x5 speed on flying
-        move = glm::normalize(move) * (Speed + (IsFlying * Speed * 4)) * dt;
+        move = glm::normalize(move) * (Speed + (IsFlying * Speed * m_Camera->MovementSpeed)) * dt;
 
         // X axis
         glm::vec3 newPos = Position;
