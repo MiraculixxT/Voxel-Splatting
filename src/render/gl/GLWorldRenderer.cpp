@@ -19,7 +19,10 @@ void GLWorldRenderer::Init() {
         "assets/textures/stone.png",       // i 0
         "assets/textures/dirt.png",        // i 1
         "assets/textures/grass_top.png",   // i 2
-        "assets/textures/grass_side.png"   // i 3
+        "assets/textures/grass_side.png",   // i 3
+        "assets/textures/sand.png",   // i 4
+        "assets/textures/snow.png",   // i 5
+        "assets/textures/water.png"   // i 6
     };
     m_TextureArray = GLTextureUtils::LoadTexture2DArray(textureFiles);
 

@@ -8,7 +8,10 @@ enum class BlockType : uint8_t {
     Air = 0,
     Stone = 1,
     Dirt = 2,
-    Grass = 3
+    Grass = 3,
+    Sand = 4,
+    Snow = 5,
+    Water = 6,
 };
 
 
