@@ -158,7 +158,29 @@ void World::tick() {
     while (!queuedChunks.empty()) {
         Chunk* chunk = queuedChunks.front();
         queuedChunks.pop();
-        chunk->BuildMesh(*this);
-        chunkRenderer->UploadMesh(chunk->cx, chunk->cz, chunk->GetMeshVertices());
+
+        // Rebuild the new chunk and its neighbors so boundary faces get culled correctly
+        rebuildChunkAndNeighbors(chunk->cx, chunk->cz);
     }
+}
+
+void World::rebuildChunk(int cx, int cy) {
+    if (!chunkRenderer) return;
+
+    Chunk* chunk = getChunk(cx, cy);
+    if (!chunk) return;
+
+    // Mesh neu aufbauen (sichtbare Faces inkl. Nachbarn)
+    chunk->BuildMesh(*this);
+
+    // An Renderer durchreichen
+    chunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+}
+
+void World::rebuildChunkAndNeighbors(int cx, int cy) {
+    rebuildChunk(cx, cy);
+    rebuildChunk(cx + 1, cy);
+    rebuildChunk(cx - 1, cy);
+    rebuildChunk(cx, cy + 1);
+    rebuildChunk(cx, cy - 1);
 }

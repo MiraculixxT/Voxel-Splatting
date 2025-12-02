@@ -36,6 +36,9 @@ public:
 
     void tick();
 
+    void rebuildChunk(int cx, int cy);
+    void rebuildChunkAndNeighbors(int cx, int cy);
+
 private:
     ChunkStorage chunks;
     Settings& settings;
