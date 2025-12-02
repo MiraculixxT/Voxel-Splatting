@@ -22,101 +22,154 @@ Chunk::~Chunk() {
     // No more GL objects to clean up here
 }
 
-float SmoothStep(const float edge0, const float edge1, const float x) {
-    const float t = glm::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
+// Helper: Remaps a value from one range to another
+float Remap(float value, float min1, float max1, float min2, float max2) {
+    return min2 + (value - min1) * (max2 - min2) / (max1 - min1);
+}
+
+// Helper: Creates "steps" in the terrain (The Minecraft look)
+float Terrace(float value, float stepSize) {
+    return std::round(value / stepSize) * stepSize;
 }
 
 // Use terrain copy to be thread safe
-void Chunk::GenerateSimpleTerrain(const TerrainNoise noise) {
+float GetHeightFromCurve(float continentalness, float peaks) {
+    // continentalness is -1.0 to 1.0.
+
+    // 1. DEEP OCEAN (-1.0 to -0.6)
+    if (continentalness < -0.6f) {
+        return Remap(continentalness, -1.0f, -0.6f, 10.0f, 40.0f);
+    }
+    // 2. OCEAN / BEACH (-0.6 to -0.15)
+    if (continentalness < -0.15f) {
+        return Remap(continentalness, -0.6f, -0.15f, 40.0f, 62.0f);
+    }
+    // 3. GREAT PLAINS / VALLEY FLOOR (-0.15 to 0.3)
+    // *Key Feature*: A wide range of noise maps to a very small height range.
+    // This creates the flat valley floor seen in your image.
+    if (continentalness < 0.3f) {
+        return Remap(continentalness, -0.15f, 0.3f, 65.0f, 75.0f);
+    }
+    // 4. CLIFFS / HIGH PLATEAU (0.3 to 1.0)
+    // Sudden jump in height
+
+    // Base height for mountains
+    float base = Remap(continentalness, 0.3f, 1.0f, 100.0f, 180.0f);
+
+    // Add jagged peaks ON TOP of the plateau
+    // We only add peaks if we are in the mountain zone
+    return base + (peaks * 30.0f);
+}
+
+void Chunk::GenerateSimpleTerrain(const TerrainNoise& noise) {
+    // Prepare a list of trees to generate after the terrain is filled
+    std::vector<Tree> treesToGen;
+
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
 
-            // Coordinates & Noise
-            const auto gx = static_cast<float>(x + cx * CHUNK_WIDTH);
-            const auto gz = static_cast<float>(z + cz * CHUNK_WIDTH);
-            if (gx > 100000 || gz > 100000) {
-                std::cout << "Large gx/gz in chunk generation: " << gx << ", " << gz << std::endl;
-            }
+            float gx = static_cast<float>(x + cx * CHUNK_WIDTH);
+            float gz = static_cast<float>(z + cz * CHUNK_WIDTH);
 
-            // Fetch raw noise (-1.0 to 1.0)
-            float contVal = noise.continental.GetNoise(gx, gz); // Range -1 to 1
-            float moistVal = noise.moisture.GetNoise(gx, gz);
+            // --- A. Domain Warping ---
+            // This makes the terrain look like it "flows" rather than just being round blobs.
+            // We distort the coordinates slightly before sampling the main noise.
+            float warpX = noise.moisture.GetNoise(gx, gz) * 40.0f; // Uses moisture noise for warp
+            float warpZ = noise.peaks.GetNoise(gx, gz) * 40.0f;
 
-            // For mountains map range -1..1 to 0..1 for easier math
-            float mountBaseVal = (noise.mountainBase.GetNoise(gx, gz) + 1.0f) * 0.5f;
-            float peakVal = (noise.peaks.GetNoise(gx, gz) + 1.0f) * 0.5f;
+            // --- B. Sample Noise ---
+            // Note: We use very low frequency for continental to get MASSIVE biomes
+            float contVal = noise.continental.GetNoise(gx + warpX, gz + warpZ);
+            float peakVal = noise.peaks.GetNoise(gx, gz); // High frequency detail
 
-            // A. Base Terrain (Plains/Hills)
-            // Maps -1..1 to roughly 60..90 - Gentle rolling hills
-            float plainsHeight = SEA_LEVEL + 4.0f + (contVal * 10.0f);
+            // --- C. Calculate Height ---
+            // Use the Spline approach
+            float rawHeight = GetHeightFromCurve(contVal, std::abs(peakVal));
 
-            // B. Mountain Terrain
-            // Formula: Base Height + (MountainMass * PeakDetail)
-            // 1. mountainBaseVal: Defines the big "humps" of the mountains.
-            // 2. peakVal: Adds the texture on top.
-            // 3. Squaring mountBaseVal (pow 2) makes the valleys between mountains wider.
-            float mountainHeight = 80.0f; // Mountains start at y=80
-            mountainHeight += (std::pow(mountBaseVal, 2.0f) * 100.0f); // The Mass (up to +100 height)
-            mountainHeight += (peakVal * 20.0f); // The Jagged detail (up to +20 height)
+            // Apply Terracing (Stepped look from the image)
+            // Steps of 2 blocks for a stylized look, or 1 for smooth
+            rawHeight = Terrace(rawHeight, 1.0f);
 
-            // --- The Blender ---
+            int height = static_cast<int>(rawHeight);
+            height = glm::clamp(height, 1, CHUNK_HEIGHT - 1);
 
-            // Define where mountains appear based on Continentalness
-            // -1.0 to 0.3 = Ocean/Plains
-            // 0.3 to 0.6 = Transition (Foothills)
-            // 0.6 to 1.0 = Full Mountain Range
-            float blend = SmoothStep(0.3f, 0.5f, contVal);
-            float rawHeight = glm::mix(plainsHeight, mountainHeight, blend);
+            // --- D. Biome Determination ---
+            // We use the height directly to determine the surface block,
+            // which creates consistent sedimentary layers.
+            BlockType surfaceBlock = BlockType::Grass;
+            if (height < 64) surfaceBlock = BlockType::Sand; // Underwater/Beach
+            else if (height > 160) surfaceBlock = BlockType::Snow;
+            else if (height > 120 && peakVal > 0.5f) surfaceBlock = BlockType::Stone; // Cliffs
 
-            // River/Valley Carving
-            // If the mountain base noise is very low (a valley inside a mountain range),
-            // we pull the height down slightly so it doesn't look like a solid wall.
-            if (blend > 0.5f && mountBaseVal < 0.2f) {
-                rawHeight -= (0.2f - mountBaseVal) * 20.0f;
-            }
-
-            int finalHeight = static_cast<int>(rawHeight);
-            finalHeight = glm::clamp(finalHeight, 1, CHUNK_HEIGHT - 1);
-
-            // --- Biome Determination ---
-            BiomeType biome;
-            if (finalHeight <= SEA_LEVEL) biome = BiomeType::Ocean;
-            else if (finalHeight <= SEA_LEVEL + 4) biome = BiomeType::Beach;
-            else if (blend > 0.5f) biome = BiomeType::Mountain;
-            else biome = (moistVal > 0.0f) ? BiomeType::Forest : BiomeType::Plains;
-
-            // Fill Blocks
+            // --- E. Fill Blocks ---
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
-                BlockState blockToSet = BlockState::getBasic(BlockType::Air);
+                if (y > height) {
+                    if (y <= 62) m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Water);
+                    else m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Air);
+                }
+                else if (y == height) {
+                    m_Blocks[x][y][z] = BlockState::getBasic(surfaceBlock);
 
-                if (y <= finalHeight) {
-                    if (y < finalHeight - 4) {
-                        blockToSet = BlockState::getBasic(BlockType::Stone);
-                    } else {
-                        // Surface Logic
-                        if (biome == BiomeType::Mountain) {
-                            // Snow peaks logic
-                            if (y > 130.0 + (peakVal * 10))
-                                blockToSet = BlockState::getBasic(BlockType::Snow);
-                            else if (y > 90) // Exposed rock on mountains
-                                blockToSet = BlockState::getBasic(BlockType::Stone);
-                            else // Grassy foothills
-                                blockToSet = BlockState::getBasic(BlockType::Grass);
-                        }
-                        else if (biome == BiomeType::Ocean || biome == BiomeType::Beach) {
-                            blockToSet = BlockState::getBasic(BlockType::Sand);
-                        }
-                        else {
-                            // Standard grass/dirt
-                            if (y == finalHeight) blockToSet = BlockState::getBasic(BlockType::Grass);
-                            else blockToSet = BlockState::getBasic(BlockType::Dirt);
+                    // --- F. Tree Planning ---
+                    // Only plant trees on Grass, above water, and NOT too high up
+                    // Use a noise value for density so they clump in forests
+                    if (surfaceBlock == BlockType::Grass && y > 64 && y < 140) {
+                        // "Tree Density" noise
+                        float density = noise.moisture.GetNoise(gx * 2.0f, gz * 2.0f);
+                        if (density > 0.3f) { // Forest areas
+                            // Random chance per block (pseudo-random based on coord)
+                            if (WorldGen::ChancePercentFromCoords(gx, gz, 2)) { // 2% chance per block in forest
+                                treesToGen.push_back({x, y + 1, z, 5, (int)BlockType::Wood, (int)BlockType::Leaves});
+                            }
                         }
                     }
-                } else if (y <= SEA_LEVEL) {
-                    blockToSet = BlockState::getBasic(BlockType::Water);
                 }
-                m_Blocks[x][y][z] = blockToSet;
+                else if (y > height - 4) {
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Dirt);
+                }
+                else {
+                    m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Stone);
+                }
+            }
+        }
+    }
+
+    // --- G. Generate Trees ---
+    // Note: In a real engine, this is done in a separate "Population" pass
+    // to handle trees overlapping chunk borders. For now, we clamp to chunk.
+    for (const auto& tree : treesToGen) {
+        GenerateTree(tree);
+    }
+}
+
+// Proper Tree Generation
+void Chunk::GenerateTree(const Tree& tree) {
+    // Trunk
+    for (int i = 0; i < tree.height; ++i) {
+        SetBlock(tree.x, tree.y + i, tree.z, BlockState::getBasic((BlockType)tree.trunkType));
+    }
+
+    // Leaves (Simple Sphere/Blob)
+    int leafStart = tree.y + tree.height - 2;
+    int leafEnd = tree.y + tree.height + 1;
+    int radius = 2;
+
+    for (int ly = leafStart; ly <= leafEnd; ++ly) {
+        for (int lx = tree.x - radius; lx <= tree.x + radius; ++lx) {
+            for (int lz = tree.z - radius; lz <= tree.z + radius; ++lz) {
+
+                // Distance check for "round" look
+                int dX = lx - tree.x;
+                int dY = ly - (tree.y + tree.height - 1); // Center roughly at top of trunk
+                int dZ = lz - tree.z;
+
+                // A simple distance squared check (sphere-ish)
+                if (dX*dX + dY*dY + dZ*dZ <= radius*radius + 1) {
+                    // Don't overwrite the trunk
+                    if (GetBlock(lx, ly, lz).type == BlockType::Air) {
+                         SetBlock(lx, ly, lz, BlockState::getBasic(static_cast<BlockType>(tree.leafType)));
+                    }
+                }
             }
         }
     }

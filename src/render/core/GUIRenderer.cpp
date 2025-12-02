@@ -99,6 +99,10 @@ void GUIRenderer::RenderSettingsScreen(
         terrain.update();
     if (ImGui::SliderFloat("Freq Peaks", &terrain.freqPeaks, 0.001f, 0.03f, "%.5f"))
         terrain.update();
+    if (ImGui::SliderInt("Water Level", &terrain.SEA_LEVEL, 0, CHUNK_HEIGHT - 1))
+        terrain.update();
+    if (ImGui::SliderInt("Snow Level", &terrain.SNOW_LEVEL, 0, CHUNK_HEIGHT - 1))
+        terrain.update();
 
     ImGui::End();
 }

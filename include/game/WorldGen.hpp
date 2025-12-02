@@ -1,9 +1,6 @@
 #pragma once
 #include "FastNoiseAPI.hpp"
-
-// Define world constants
-constexpr int SEA_LEVEL = 64;
-constexpr int SNOW_LEVEL = 110;
+#include <cstdio>
 
 // Biome Types
 enum class BiomeType {
@@ -14,19 +11,29 @@ enum class BiomeType {
     Mountain
 };
 
+struct Tree {
+    int x, y, z;
+    int height;
+    int trunkType; // BlockType::Wood
+    int leafType;  // BlockType::Leaves
+};
+
 struct TerrainNoise {
     FastNoiseLite continental;
     FastNoiseLite moisture;
     FastNoiseLite mountainBase; // Defines the "mass" of the mountain
     FastNoiseLite peaks;        // Defines the "jagged rocks" mountain part
 
-    float freqContinental = 0.005f;
+    float freqContinental = 0.0005f;
     float freqMoisture = 0.005f;
     float freqMountainBase = 0.003f;
     float freqPeaks = 0.01f;
 
     int seed;
     bool regen = false; // Flag to indicate regeneration needed
+
+    int SEA_LEVEL = 64;
+    int SNOW_LEVEL = 110;
 
     explicit TerrainNoise(const int seed): seed(seed) {
         update(seed);
@@ -71,3 +78,21 @@ struct TerrainNoise {
         regen = true;
     }
 };
+
+namespace WorldGen {
+    // Fast small hash (splitmix64) — good for per-coordinate deterministic bits.
+    static inline uint64_t splitmix64(uint64_t x) {
+        x += 0x9e3779b97f4a7c15ULL;
+        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+        return x ^ (x >> 31);
+    }
+
+    // Cheap, fast deterministic check using splitmix64
+    static inline bool ChancePercentFromCoords(int wx, int wz, unsigned percent) {
+        uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx)) << 32)
+                     | static_cast<uint32_t>(wz);
+        uint64_t h = splitmix64(key);
+        return (h % 100ULL) < static_cast<uint64_t>(percent);
+    }
+}

@@ -3,6 +3,7 @@
 #include <vector>
 #include <glm/glm.hpp>
 #include "Block.hpp"
+#include "WorldGen.hpp"
 
 // Define chunk dimensions.
 constexpr int CHUNK_WIDTH = 16;
@@ -34,7 +35,9 @@ public:
     /**
      * @brief Fills the chunk with simple procedural terrain.
      */
-    void GenerateSimpleTerrain(TerrainNoise noise);
+    void GenerateSimpleTerrain(const TerrainNoise& noise);
+
+    void GenerateTree(const Tree& tree);
 
     /**
      * @brief Gets the block state at local chunk coordinates (0-15, 0-255, 0-15).
