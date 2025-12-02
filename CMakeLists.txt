@@ -47,8 +47,7 @@ FetchContent_MakeAvailable(stb)
 # NOTE: You must generate and download GLAD from https://glad.dav1d.de/
 # Settings: C/C++, Core, OpenGL 4.1 (or higher)
 # Unzip it and place the 'include' and 'src' folders into a 'vendor/glad' directory
-add_library(glad STATIC vendor/glad/src/glad.c
-        include/game/Player.hpp)
+add_library(glad STATIC vendor/glad/src/glad.c)
 target_include_directories(glad PUBLIC vendor/glad/include)
 
 # --- Include Directories ---
