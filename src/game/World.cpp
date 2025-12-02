@@ -2,11 +2,12 @@
 
 #include <queue>
 
-World::World(Settings& i_settings): settings(i_settings) {
+// Fixed seed for now
+World::World(Settings& i_settings) : settings(i_settings), noise(1337) {
     for (int x = -10; x < 10; ++x) {
         for (int y = -10; y < 10; ++y) {
-            Chunk& chunk = emplaceChunk(x, y);
-            chunk.GenerateSimpleTerrain();
+            Chunk &chunk = emplaceChunk(x, y);
+            chunk.GenerateSimpleTerrain(noise);
             chunk.BuildMesh(*this);
         }
     }
@@ -31,7 +32,7 @@ Chunk& World::emplaceChunk(int cx, int cy) {
 }
 
 // add or replace a chunk at (cx, cy)
-void World::setChunk(int cx, int cy, const Chunk& chunk) {
+void World::setChunk(int cx, int cy, Chunk& chunk) {
     ChunkColumn& column = chunks[cx];
     auto it = column.find(cy);
     if (it != column.end()) {
@@ -144,7 +145,7 @@ void World::tick() {
                 // If chunk does not exist
                 if (!hasChunk(x, z)) {
                     Chunk& newChunk = emplaceChunk(x, z);
-                    newChunk.GenerateSimpleTerrain();
+                    newChunk.GenerateSimpleTerrain(noise);
                     queuedChunks.push(&newChunk);
 
                     chunksGeneratedThisTick++;

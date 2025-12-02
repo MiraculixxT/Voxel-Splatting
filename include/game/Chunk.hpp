@@ -10,6 +10,7 @@ constexpr int CHUNK_HEIGHT = 256;
 
 // Forward declare World to avoid a circular dependency
 class World;
+struct TerrainNoise;
 
 /**
  * @class Chunk
@@ -33,7 +34,7 @@ public:
     /**
      * @brief Fills the chunk with simple procedural terrain.
      */
-    void GenerateSimpleTerrain();
+    void GenerateSimpleTerrain(const TerrainNoise& noise);
 
     /**
      * @brief Gets the block state at local chunk coordinates (0-15, 0-255, 0-15).
