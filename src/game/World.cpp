@@ -2,6 +2,7 @@
 
 #include <queue>
 #include <vector>   // for empty vertex lists when unloading
+#include <set>      // for deduplicating dirty chunks during rebuild
 
 // Fixed seed for now
 World::World(Settings& i_settings) : settings(i_settings), noise(1337) {
@@ -174,13 +175,28 @@ void World::tick() {
     }
 
     // Build meshes after generation for better culling
+    // Collect all chunks that need a rebuild (self + neighbors) into a set
+    // to avoid rebuilding the same chunk multiple times within one tick.
+    std::set<std::pair<int, int>> dirtyChunks;
+
     while (!queuedChunks.empty()) {
         Chunk* chunk = queuedChunks.front();
         queuedChunks.pop();
 
-        // Rebuild the new chunk and its neighbors so boundary faces get culled correctly
-        rebuildChunkAndNeighbors(chunk->cx, chunk->cz);
+        const int cx = chunk->cx;
+        const int cz = chunk->cz;
+
+        dirtyChunks.insert({cx, cz});
+        dirtyChunks.insert({cx + 1, cz});
+        dirtyChunks.insert({cx - 1, cz});
+        dirtyChunks.insert({cx, cz + 1});
+        dirtyChunks.insert({cx, cz - 1});
     }
+
+    for (const auto& [cx, cz] : dirtyChunks) {
+        rebuildChunk(cx, cz);
+    }
+
     uploadFinishedMeshes();
 }
 
