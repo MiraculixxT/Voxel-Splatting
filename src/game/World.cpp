@@ -121,10 +121,7 @@ void World::tick() {
                 // Remove chunks on regeneration or if they exceed the unload radius
                 if (noise.regen || dist > unloadRadiusSq) {
                     // Clear the mesh in the renderer so the chunk is no longer rendered
-                    if (chunkRenderer) {
-                        static const std::vector<float> emptyVertices{};
-                        chunkRenderer->UploadMesh(cx, cy, emptyVertices);
-                    }
+                    chunkRenderer->RemoveMesh(cx, cy);
 
                     itY = innerMap.erase(itY);
                 } else {
@@ -145,7 +142,7 @@ void World::tick() {
     // --- LOADING CHUNKS ---
     // We only want to generate limited chunks per tick to keep FPS high.
     int chunksGeneratedThisTick = 0;
-    constexpr int MAX_GEN_PER_TICK = 30;
+    constexpr int MAX_GEN_PER_TICK = 999;
 
     bool stopLoading = false;
 
