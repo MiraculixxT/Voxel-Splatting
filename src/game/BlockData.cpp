@@ -13,6 +13,9 @@ void BlockDatabase::Init() {
     // 4 = sand.png
     // 5 = snow.png
     // 6 = water.png
+    // 7 = log_side.png
+    // 8 = log_top.png
+    // 9 = leave.png
 
     m_BlockTextures[BlockType::Stone] = {0, 0, 0}; // Top, Bottom, Side
     m_BlockTextures[BlockType::Dirt]  = {1, 1, 1};
@@ -20,6 +23,8 @@ void BlockDatabase::Init() {
     m_BlockTextures[BlockType::Sand]  = {4, 4, 4};
     m_BlockTextures[BlockType::Snow]  = {5, 1, 5}; // Top=snow, Bottom=dirt, Side=snow
     m_BlockTextures[BlockType::Water] = {6, 6, 6}; // Placeholder for now
+    m_BlockTextures[BlockType::Wood]  = {8, 8, 7}; // Top=log_top, Bottom=log_top, Side=log_side
+    m_BlockTextures[BlockType::Leaves]= {9, 9, 9}; //
 }
 
 float BlockDatabase::GetTextureLayer(BlockType type, BlockFace face) {
