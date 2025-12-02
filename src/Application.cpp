@@ -20,9 +20,9 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
+      m_World(m_Settings),
       m_WorldRenderer(m_Camera, m_Settings, m_World),
-      m_Player(nullptr)
-      {
+      m_Player(nullptr) {
 }
 
 Application::~Application() {
@@ -90,6 +90,8 @@ void Application::Init() {
     // --- 7. Initialize World Renderer ---
     m_WorldRenderer.Init();
     m_Player = new Player(&m_Camera, &m_World);
+    m_World.setPlayer(m_Player);
+    m_World.setChunkRenderer(m_WorldRenderer.GetChunkRenderer());
 
     // --- 8. FIX: Force Initial Viewport Update ---
     // Wayland/KDE often initializes with different Window vs Framebuffer sizes.
@@ -99,20 +101,36 @@ void Application::Init() {
 }
 
 void Application::Run() {
-    // --- 8. Main Render Loop ---
+    const double dt = 1.0 / 20.0;
+    double accumulator = 0.0;
+
+    // --- Main Render Loop ---
     while (!glfwWindowShouldClose(m_Window)) {
         // --- Per-frame logic ---
-        const auto currentFrame = static_cast<float>(glfwGetTime());
-        m_DeltaTime = currentFrame - m_LastFrame;
+        const double currentFrame = glfwGetTime();
+        double frameTime = currentFrame - m_LastFrame;
         m_LastFrame = currentFrame;
+
+        // Prevent spiral of death if frame time is too long
+        if (frameTime > 0.25) frameTime = 0.25;
+
+        m_DeltaTime = static_cast<float>(frameTime);
+        accumulator += frameTime;
 
         // --- Input ---
         ProcessInput();
 
-        // --- Update ---
+        // --- Fixed Tickrate (Physics & World Gen) ---
+        while (accumulator >= dt) {
+            UpdateTick();
+            accumulator -= dt;
+        }
+
+        // --- Update as fast as possible ---
         Update();
 
         // --- Render ---
+        // (Rendering happens as fast as possible, using interpolation if needed)
         Render();
 
         // --- Swap Buffers and Poll Events ---
@@ -150,7 +168,10 @@ void Application::ProcessInput() {
 void Application::Update() {
     if (m_Player)
         m_Player->Update(m_DeltaTime);
-    // world ticking
+}
+
+void Application::UpdateTick() {
+    m_World.tick();
 }
 
 void Application::Render() {

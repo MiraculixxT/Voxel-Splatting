@@ -27,6 +27,7 @@ public:
 private:
     void ProcessInput();
     void Update();
+    void UpdateTick();
     void Render();
 
     // Callbacks

@@ -1,11 +1,13 @@
 #pragma once
-#include <vector>
 
 #include "Chunk.hpp"
+#include "Player.hpp"
+#include "Settings.hpp"
+#include "render/gl/GLChunkRenderer.hpp"
 
 class World {
 public:
-    World();
+    explicit World(Settings& i_settings);
     ~World();
 
     // map[x][y] -> Chunk
@@ -29,6 +31,15 @@ public:
 
     BlockState getBlock(int wx, int wy, int wz);
 
+    void setPlayer(Player* i_player) { player = i_player; }
+    void setChunkRenderer(GLChunkRenderer* i_chunkRenderer) { chunkRenderer = i_chunkRenderer; }
+
+    void tick();
+
 private:
     ChunkStorage chunks;
+    Settings& settings;
+    Player* player = nullptr;
+
+    GLChunkRenderer* chunkRenderer = nullptr;
 };

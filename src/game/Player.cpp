@@ -44,9 +44,10 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         move += right;
 
+    float vSpeed = Speed*2 + (IsFlying * Speed * m_Camera->MovementSpeed / 2);
+    float hSpeed = Speed + (IsFlying * Speed * m_Camera->MovementSpeed);
     if (glm::length(move) > 0.0001f) {
-        // x5 speed on flying
-        move = glm::normalize(move) * (Speed + (IsFlying * Speed * m_Camera->MovementSpeed)) * dt;
+        move = glm::normalize(move) * hSpeed * dt;
 
         // X axis
         glm::vec3 newPos = Position;
@@ -66,7 +67,7 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
     // Jump (only allowed when on ground, flag is set in gravity handling)
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
         if (IsFlying) {
-            Position.y += Speed * 2 * dt;
+            Position.y += vSpeed * 2 * dt;
         } else if (OnGround) {
             VelocityY = 10.0f;
             OnGround = false;
@@ -75,7 +76,7 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
 
     if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
         if (IsFlying) {
-            Position.y -= Speed * 2 * dt;
+            Position.y -= vSpeed * 2 * dt;
         }
     }
 }
