@@ -34,7 +34,7 @@ public:
     /**
      * @brief Fills the chunk with simple procedural terrain.
      */
-    void GenerateSimpleTerrain(const TerrainNoise& noise);
+    void GenerateSimpleTerrain(TerrainNoise noise);
 
     /**
      * @brief Gets the block state at local chunk coordinates (0-15, 0-255, 0-15).

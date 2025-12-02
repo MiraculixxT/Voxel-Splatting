@@ -43,7 +43,12 @@ void GUIRenderer::RenderStatsOverview(const std::size_t vertexCount, const Camer
     ImGui::End();
 }
 
-void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChunkRenderer* chunkRenderer, World& world, Player* player) {
+void GUIRenderer::RenderSettingsScreen(
+    Settings& settings,
+    Camera& camera,
+    GLChunkRenderer* chunkRenderer,
+    World& world,
+    Player* player) {
     constexpr ImGuiWindowFlags window_flags =
         ImGuiWindowFlags_NoCollapse |       // Prevent collapsing
         ImGuiWindowFlags_AlwaysAutoResize; // Auto-resize to fit content
@@ -80,6 +85,20 @@ void GUIRenderer::RenderSettingsScreen(Settings& settings, Camera& camera, GLChu
     ImGui::Text("Pos: (%.1f, %.1f, %.1f)", camera.Position.x, camera.Position.y, camera.Position.z);
     ImGui::SliderFloat("Speed", &camera.MovementSpeed, 1.0f, 100.0f);
     ImGui::SliderFloat("FOV", &camera.Zoom, 1.0f, 90.0f);
+
+    ImGui::Text("---- WORLD ----");
+    auto& terrain = world.getTerrainNoise();
+    if (ImGui::Button("Randomize Seed")) {
+        terrain.update(std::rand());
+    }
+    if (ImGui::SliderFloat("Freq Continental", &terrain.freqContinental, 0.001f, 0.02f, "%.5f"))
+        terrain.update();
+    if (ImGui::SliderFloat("Freq Moisture", &terrain.freqMoisture, 0.001f, 0.02f, "%.5f"))
+        terrain.update();
+    if (ImGui::SliderFloat("Freq Mountain Base", &terrain.freqMountainBase, 0.001f, 0.02f, "%.5f"))
+        terrain.update();
+    if (ImGui::SliderFloat("Freq Peaks", &terrain.freqPeaks, 0.001f, 0.03f, "%.5f"))
+        terrain.update();
 
     ImGui::End();
 }

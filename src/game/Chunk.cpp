@@ -22,106 +22,98 @@ Chunk::~Chunk() {
     // No more GL objects to clean up here
 }
 
-float SmoothStep(float edge0, float edge1, float x) {
-    float t = glm::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+float SmoothStep(const float edge0, const float edge1, const float x) {
+    const float t = glm::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
 
-void Chunk::GenerateSimpleTerrain(const TerrainNoise& noise) {
+// Use terrain copy to be thread safe
+void Chunk::GenerateSimpleTerrain(const TerrainNoise noise) {
     for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
 
-            // 1. Coordinates & Noise
-            float gx = static_cast<float>(x + cx * CHUNK_WIDTH);
-            float gz = static_cast<float>(z + cz * CHUNK_WIDTH);
+            // Coordinates & Noise
+            const auto gx = static_cast<float>(x + cx * CHUNK_WIDTH);
+            const auto gz = static_cast<float>(z + cz * CHUNK_WIDTH);
+            if (gx > 100000 || gz > 100000) {
+                std::cout << "Large gx/gz in chunk generation: " << gx << ", " << gz << std::endl;
+            }
 
             // Fetch raw noise (-1.0 to 1.0)
-            float contVal = noise.continental.GetNoise(gx, gz);
+            float contVal = noise.continental.GetNoise(gx, gz); // Range -1 to 1
             float moistVal = noise.moisture.GetNoise(gx, gz);
-            float peakVal = noise.peaks.GetNoise(gx, gz);
 
-            // 2. Continuous Height Calculation
-            // We calculate two potential heights: "What if this was plains?" and "What if this was mountains?"
-            // Then we blend them based on how "continental" the terrain is.
+            // For mountains map range -1..1 to 0..1 for easier math
+            float mountBaseVal = (noise.mountainBase.GetNoise(gx, gz) + 1.0f) * 0.5f;
+            float peakVal = (noise.peaks.GetNoise(gx, gz) + 1.0f) * 0.5f;
 
             // A. Base Terrain (Plains/Hills)
-            // Maps -1..1 to roughly 60..90
-            float plainsHeight = SEA_LEVEL + 5 + (contVal * 20.0f);
+            // Maps -1..1 to roughly 60..90 - Gentle rolling hills
+            float plainsHeight = SEA_LEVEL + 4.0f + (contVal * 10.0f);
 
             // B. Mountain Terrain
-            // Maps -1..1 to roughly 90..200 (Amplified by peaks)
-            // Note: We add the base contVal so mountains generally sit on high ground
-            float mountainHeight = 90.0f + (peakVal * 50.0f) + (contVal * 20.0f);
+            // Formula: Base Height + (MountainMass * PeakDetail)
+            // 1. mountainBaseVal: Defines the big "humps" of the mountains.
+            // 2. peakVal: Adds the texture on top.
+            // 3. Squaring mountBaseVal (pow 2) makes the valleys between mountains wider.
+            float mountainHeight = 80.0f; // Mountains start at y=80
+            mountainHeight += (std::pow(mountBaseVal, 2.0f) * 100.0f); // The Mass (up to +100 height)
+            mountainHeight += (peakVal * 20.0f); // The Jagged detail (up to +20 height)
 
-            // C. The Blender
-            // We define a transition zone.
-            // Below 0.3 = Pure Plains logic.
-            // Above 0.6 = Pure Mountain logic.
-            // Between 0.3 and 0.6 = Blend them.
-            float mountainBlend = SmoothStep(0.3f, 0.6f, contVal);
+            // --- The Blender ---
 
-            // Linear Interpolate (Mix) based on the blend factor
-            float rawHeight = glm::mix(plainsHeight, mountainHeight, mountainBlend);
+            // Define where mountains appear based on Continentalness
+            // -1.0 to 0.3 = Ocean/Plains
+            // 0.3 to 0.6 = Transition (Foothills)
+            // 0.6 to 1.0 = Full Mountain Range
+            float blend = SmoothStep(0.3f, 0.5f, contVal);
+            float rawHeight = glm::mix(plainsHeight, mountainHeight, blend);
 
-            // D. Handle Oceans separately (optional, but keeps coastlines clean)
-            // If very low continentalness, pull height down rapidly to form ocean floor
-            if (contVal < -0.1f) {
-                float oceanFactor = SmoothStep(-0.1f, -0.4f, contVal); // 0 at coast, 1 at deep ocean
-                rawHeight = glm::mix(rawHeight, (float)(SEA_LEVEL - 20), oceanFactor);
+            // River/Valley Carving
+            // If the mountain base noise is very low (a valley inside a mountain range),
+            // we pull the height down slightly so it doesn't look like a solid wall.
+            if (blend > 0.5f && mountBaseVal < 0.2f) {
+                rawHeight -= (0.2f - mountBaseVal) * 20.0f;
             }
 
             int finalHeight = static_cast<int>(rawHeight);
             finalHeight = glm::clamp(finalHeight, 1, CHUNK_HEIGHT - 1);
 
-            // 3. Biome Determination (Strictly for Block Types now)
+            // --- Biome Determination ---
             BiomeType biome;
+            if (finalHeight <= SEA_LEVEL) biome = BiomeType::Ocean;
+            else if (finalHeight <= SEA_LEVEL + 4) biome = BiomeType::Beach;
+            else if (blend > 0.5f) biome = BiomeType::Mountain;
+            else biome = (moistVal > 0.0f) ? BiomeType::Forest : BiomeType::Plains;
 
-            if (finalHeight <= SEA_LEVEL) {
-                 biome = BiomeType::Ocean; // Or Beach if close to SEA_LEVEL
-            }
-            else if (finalHeight <= SEA_LEVEL + 2) {
-                biome = BiomeType::Beach;
-            }
-            else if (mountainBlend > 0.5f) { // Use the blend factor to define biome
-                biome = BiomeType::Mountain;
-            }
-            else {
-                 biome = (moistVal > 0.1f) ? BiomeType::Forest : BiomeType::Plains;
-            }
-
-            // 4. Fill Blocks (Same as before)
+            // Fill Blocks
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 BlockState blockToSet = BlockState::getBasic(BlockType::Air);
 
                 if (y <= finalHeight) {
-                    if (y < finalHeight - 3) {
+                    if (y < finalHeight - 4) {
                         blockToSet = BlockState::getBasic(BlockType::Stone);
-                    }
-                    else {
-                        switch (biome) {
-                            case BiomeType::Ocean:
-                            case BiomeType::Beach:
-                                blockToSet = BlockState::getBasic(BlockType::Sand);
-                                break;
-                            case BiomeType::Mountain:
-                                // Using peakVal here adds "snow caps" nicely
-                                if (y > 110 + (peakVal * 10))
-                                    blockToSet = BlockState::getBasic(BlockType::Snow);
-                                else
-                                    blockToSet = BlockState::getBasic(BlockType::Stone);
-                                break;
-                            case BiomeType::Forest:
-                            case BiomeType::Plains:
-                            default:
-                                if (y == finalHeight)
-                                    blockToSet = BlockState::getBasic(BlockType::Grass);
-                                else
-                                    blockToSet = BlockState::getBasic(BlockType::Dirt);
-                                break;
+                    } else {
+                        // Surface Logic
+                        if (biome == BiomeType::Mountain) {
+                            // Snow peaks logic
+                            if (y > 130.0 + (peakVal * 10))
+                                blockToSet = BlockState::getBasic(BlockType::Snow);
+                            else if (y > 90) // Exposed rock on mountains
+                                blockToSet = BlockState::getBasic(BlockType::Stone);
+                            else // Grassy foothills
+                                blockToSet = BlockState::getBasic(BlockType::Grass);
+                        }
+                        else if (biome == BiomeType::Ocean || biome == BiomeType::Beach) {
+                            blockToSet = BlockState::getBasic(BlockType::Sand);
+                        }
+                        else {
+                            // Standard grass/dirt
+                            if (y == finalHeight) blockToSet = BlockState::getBasic(BlockType::Grass);
+                            else blockToSet = BlockState::getBasic(BlockType::Dirt);
                         }
                     }
-                }
-                else if (y <= SEA_LEVEL) {
+                } else if (y <= SEA_LEVEL) {
                     blockToSet = BlockState::getBasic(BlockType::Water);
                 }
                 m_Blocks[x][y][z] = blockToSet;

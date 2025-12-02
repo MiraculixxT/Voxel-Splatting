@@ -109,7 +109,8 @@ void World::tick() {
 
             const float dist = distanceSq(cx, cy, pChunkX, pChunkZ);
 
-            if (dist > unloadRadiusSq) {
+            // Purge chunks on regen request or if beyond unload radius
+            if (noise.regen || dist > unloadRadiusSq) {
                 // Determine if we should delete or buffer.
                 // For now, we simply erase to free memory.
                 itY = innerMap.erase(itY);
@@ -125,11 +126,12 @@ void World::tick() {
             ++itX;
         }
     }
+    noise.regen = false;
 
     // --- LOADING CHUNKS ---
     // We only want to generate limited chunks per tick to keep FPS high.
     int chunksGeneratedThisTick = 0;
-    constexpr int MAX_GEN_PER_TICK = 10;
+    constexpr int MAX_GEN_PER_TICK = 30;
 
     bool stopLoading = false;
 
