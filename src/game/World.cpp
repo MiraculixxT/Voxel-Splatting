@@ -10,10 +10,15 @@ World::World(Settings& i_settings): settings(i_settings) {
             chunk.BuildMesh(*this);
         }
     }
+    running = true;
+    meshThread = std::thread(&World::meshWorker, this);
 }
 
 World::~World() {
     // Cleanup if necessary & world saving?
+    running = false;
+    taskQueueCV.notify_all();
+    if (meshThread.joinable()) meshThread.join();
 }
 
 Chunk& World::emplaceChunk(int cx, int cy) {
@@ -79,7 +84,7 @@ BlockState World::getBlock(const int wx, const int wy, const int wz) {
 }
 
 void World::tick() {
-    if (!player) return;
+    //if (!player) return;
 
     // Player Chunk Coordinates
     const int pChunkX = static_cast<int>(std::floor(player->Position.x / CHUNK_WIDTH));
@@ -162,19 +167,11 @@ void World::tick() {
         // Rebuild the new chunk and its neighbors so boundary faces get culled correctly
         rebuildChunkAndNeighbors(chunk->cx, chunk->cz);
     }
+    uploadFinishedMeshes();
 }
 
 void World::rebuildChunk(int cx, int cy) {
-    if (!chunkRenderer) return;
-
-    Chunk* chunk = getChunk(cx, cy);
-    if (!chunk) return;
-
-    // Mesh neu aufbauen (sichtbare Faces inkl. Nachbarn)
-    chunk->BuildMesh(*this);
-
-    // An Renderer durchreichen
-    chunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+    enqueueRebuildTask(cx, cy);
 }
 
 void World::rebuildChunkAndNeighbors(int cx, int cy) {
@@ -183,4 +180,54 @@ void World::rebuildChunkAndNeighbors(int cx, int cy) {
     rebuildChunk(cx - 1, cy);
     rebuildChunk(cx, cy + 1);
     rebuildChunk(cx, cy - 1);
+}
+
+void World::enqueueRebuildTask(int cx, int cy) {
+    Chunk* c = getChunk(cx, cy);
+    if (!c) return;
+
+    {
+        std::lock_guard<std::mutex> lock(taskQueueMutex);
+        taskQueue.push({cx, cy, c});
+    }
+    taskQueueCV.notify_one();
+}
+
+void World::meshWorker() {
+    while (running) {
+        MeshTask task;
+
+        {
+            std::unique_lock<std::mutex> lock(taskQueueMutex);
+            taskQueueCV.wait(lock, [&]{ return !taskQueue.empty() || !running; });
+            if (!running) return;
+
+            task = taskQueue.front();
+            taskQueue.pop();
+        }
+
+        task.chunk->BuildMesh(*this);
+
+        {
+            std::lock_guard<std::mutex> lock(doneQueueMutex);
+            doneQueue.push(task);
+        }
+    }
+}
+
+void World::uploadFinishedMeshes() {
+    while (true) {
+        MeshTask task;
+
+        {
+            std::lock_guard<std::mutex> lock(doneQueueMutex);
+            if (doneQueue.empty()) break;
+            task = doneQueue.front();
+            doneQueue.pop();
+        }
+
+        if (chunkRenderer) {
+            chunkRenderer->UploadMesh(task.cx, task.cy, task.chunk->GetMeshVertices());
+        }
+    }
 }

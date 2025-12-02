@@ -4,6 +4,9 @@
 #include "Player.hpp"
 #include "Settings.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
+#include "queue"
+#include "mutex"
+#include "thread"
 
 class World {
 public:
@@ -39,10 +42,32 @@ public:
     void rebuildChunk(int cx, int cy);
     void rebuildChunkAndNeighbors(int cx, int cy);
 
+    // Async
+    void enqueueRebuildTask(int cx, int cy);
+    void uploadFinishedMeshes();
+    void meshWorker();
+
 private:
     ChunkStorage chunks;
     Settings& settings;
     Player* player = nullptr;
 
     GLChunkRenderer* chunkRenderer = nullptr;
+
+    // --- Async meshing system ---
+    struct MeshTask {
+        int cx, cy;
+        Chunk* chunk;
+    };
+
+    std::queue<MeshTask> taskQueue;
+    std::queue<MeshTask> doneQueue;
+
+    std::mutex taskQueueMutex;
+    std::mutex doneQueueMutex;
+
+    std::condition_variable taskQueueCV;
+
+    std::thread meshThread;
+    std::atomic<bool> running = false;
 };
