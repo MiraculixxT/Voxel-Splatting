@@ -33,8 +33,8 @@ void GLWorldRenderer::Init() {
     m_ChunkRenderer = new GLChunkRenderer(m_Camera, m_Settings);
     for (auto [cx, column] : m_World.getChunks()) {
         for (auto& [cy, chunk] : column) {
-            chunk.BuildMesh(m_World);
-            m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+            chunk->BuildMesh(m_World);
+            m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
         }
     }
 

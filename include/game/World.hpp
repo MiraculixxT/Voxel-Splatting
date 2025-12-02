@@ -1,6 +1,9 @@
 #pragma once
 
 #include <condition_variable>
+#include <memory>
+#include <shared_mutex>
+#include <atomic>
 
 #include "Chunk.hpp"
 #include "Player.hpp"
@@ -17,8 +20,9 @@ public:
     explicit World(Settings& i_settings);
     ~World();
 
-    // map[x][y] -> Chunk
-    using ChunkColumn  = std::unordered_map<int, Chunk>;
+    // map[x][y] -> shared_ptr<Chunk>
+    using ChunkPtr     = std::shared_ptr<Chunk>;
+    using ChunkColumn  = std::unordered_map<int, ChunkPtr>;
     using ChunkStorage = std::unordered_map<int, ChunkColumn>;
 
     // construct chunk in-place from coords
@@ -54,15 +58,16 @@ public:
 
 private:
     ChunkStorage chunks;
+    mutable std::shared_mutex chunksMutex;
     Settings& settings;
     Player* player = nullptr;
 
     GLChunkRenderer* chunkRenderer = nullptr;
 
-    // --- Async meshing system ---
+    // Async meshing system
     struct MeshTask {
         int cx, cy;
-        Chunk* chunk;
+        ChunkPtr chunk;
     };
 
     std::queue<MeshTask> taskQueue;

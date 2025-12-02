@@ -63,8 +63,8 @@ void GUIRenderer::RenderSettingsScreen(
         chunkRenderer->RemoveAllMeshes();
         for (auto [cx, column] : world.getChunks()) {
             for (auto& [cy, chunk] : column) {
-                chunk.BuildMesh(world);
-                chunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+                chunk->BuildMesh(world);
+                chunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
                 //printf("DEBUG: Re-built chunk (%d, %d) with %d vertices\n", cx, cy, chunk.GetVertexCount());
             }
         }

@@ -1,6 +1,7 @@
 #include "game/World.hpp"
 
 #include <queue>
+#include <vector>   // for empty vertex lists when unloading
 
 // Fixed seed for now
 World::World(Settings& i_settings) : settings(i_settings), noise(1337) {
@@ -23,36 +24,40 @@ World::~World() {
 }
 
 Chunk& World::emplaceChunk(int cx, int cy) {
-    ChunkColumn& column = chunks[cx]; // default-constructs the inner map
+    // Exclusive write lock, because we modify the chunk map
+    std::unique_lock<std::shared_mutex> lock(chunksMutex);
+
+    ChunkColumn& column = chunks[cx];
     auto [it, inserted] = column.try_emplace(
         cy,
-        cx, cy   // forwarded to Chunk constructor
+        std::make_shared<Chunk>(cx, cy)
     );
-    return it->second;
+    return *it->second;
 }
 
-// add or replace a chunk at (cx, cy)
+// Set or replace a chunk at position (cx, cy)
 void World::setChunk(int cx, int cy, Chunk& chunk) {
+    std::unique_lock<std::shared_mutex> lock(chunksMutex);
+
     ChunkColumn& column = chunks[cx];
-    auto it = column.find(cy);
-    if (it != column.end()) {
-        it->second = chunk;              // overwrites existing
-    } else {
-        column.emplace(cy, chunk);    // copy-constructs from `chunk`
-    }
+    column[cy] = std::make_shared<Chunk>(chunk);
 }
 
-// get pointer to chunk, or nullptr if it does not exist
+// Get pointer to chunk, or nullptr if it does not exist
 Chunk* World::getChunk(const int cx, const int cy) {
+    std::shared_lock<std::shared_mutex> lock(chunksMutex);
+
     auto itX = chunks.find(cx);
     if (itX == chunks.end()) return nullptr;
     auto itY = itX->second.find(cy);
     if (itY == itX->second.end()) return nullptr;
-    return &itY->second;
+    return itY->second.get();
 }
 
-// check if chunk at (cx, cy) exists/is loaded
+// Check whether a chunk at (cx, cy) exists/is loaded
 bool World::hasChunk(const int cx, const int cy) const {
+    std::shared_lock<std::shared_mutex> lock(chunksMutex);
+
     auto itX = chunks.find(cx);
     if (itX == chunks.end()) return false;
     auto itY = itX->second.find(cy);
@@ -99,31 +104,40 @@ void World::tick() {
     const auto unloadRadiusSq = static_cast<float>((renderRadius + 2) * (renderRadius + 2));
 
     // --- 3. UNLOADING CHUNKS ---
-    // Iterate all loaded chunks and remove those too far away
-    for (auto itX = chunks.begin(); itX != chunks.end(); ) {
-        const int cx = itX->first;
-        auto& innerMap = itX->second;
+    {
+        // Exclusive write lock, because we are removing chunks
+        std::unique_lock<std::shared_mutex> lock(chunksMutex);
 
-        for (auto itY = innerMap.begin(); itY != innerMap.end(); ) {
-            const int cy = itY->first;
+        // Iterate through all loaded chunks and remove those too far away
+        for (auto itX = chunks.begin(); itX != chunks.end(); ) {
+            const int cx = itX->first;
+            auto& innerMap = itX->second;
 
-            const float dist = distanceSq(cx, cy, pChunkX, pChunkZ);
+            for (auto itY = innerMap.begin(); itY != innerMap.end(); ) {
+                const int cy = itY->first;
 
-            // Purge chunks on regen request or if beyond unload radius
-            if (noise.regen || dist > unloadRadiusSq) {
-                // Determine if we should delete or buffer.
-                // For now, we simply erase to free memory.
-                itY = innerMap.erase(itY);
-            } else {
-                ++itY;
+                const float dist = distanceSq(cx, cy, pChunkX, pChunkZ);
+
+                // Remove chunks on regeneration or if they exceed the unload radius
+                if (noise.regen || dist > unloadRadiusSq) {
+                    // Clear the mesh in the renderer so the chunk is no longer rendered
+                    if (chunkRenderer) {
+                        static const std::vector<float> emptyVertices{};
+                        chunkRenderer->UploadMesh(cx, cy, emptyVertices);
+                    }
+
+                    itY = innerMap.erase(itY);
+                } else {
+                    ++itY;
+                }
             }
-        }
 
-        // If the X-column is empty, remove it too
-        if (innerMap.empty()) {
-            itX = chunks.erase(itX);
-        } else {
-            ++itX;
+            // If the column is empty, remove it as well
+            if (innerMap.empty()) {
+                itX = chunks.erase(itX);
+            } else {
+                ++itX;
+            }
         }
     }
     noise.regen = false;
@@ -186,7 +200,21 @@ void World::rebuildChunkAndNeighbors(int cx, int cy) {
 }
 
 void World::enqueueRebuildTask(int cx, int cy) {
-    Chunk* c = getChunk(cx, cy);
+    // Retrieve ChunkPtr from the chunk map (as shared_ptr), ensuring the chunk
+    // stays alive even if it gets removed from the map
+    ChunkPtr c;
+
+    {
+        std::shared_lock<std::shared_mutex> lock(chunksMutex);
+
+        auto itX = chunks.find(cx);
+        if (itX == chunks.end()) return;
+        auto itY = itX->second.find(cy);
+        if (itY == itX->second.end()) return;
+
+        c = itY->second;
+    }
+
     if (!c) return;
 
     {
@@ -229,7 +257,8 @@ void World::uploadFinishedMeshes() {
             doneQueue.pop();
         }
 
-        if (chunkRenderer) {
+        // Only upload if the chunk still exists
+        if (chunkRenderer && hasChunk(task.cx, task.cy)) {
             chunkRenderer->UploadMesh(task.cx, task.cy, task.chunk->GetMeshVertices());
         }
     }
