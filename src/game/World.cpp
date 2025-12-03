@@ -69,7 +69,12 @@ float distanceSq(const int x1, const int y1, const int x2, const int y2) {
     return static_cast<float>((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2));
 }
 
-BlockState World::getBlock(const int wx, const int wy, const int wz) {
+struct BlockInChunk {
+    int bx, by, bz;
+    Chunk* chunk;
+};
+
+BlockInChunk getBlockInChunk(World& world, const int wx, const int wy, const int wz) {
     const int cx = (wx >= 0) ? (wx / CHUNK_WIDTH) : ((wx - (CHUNK_WIDTH - 1)) / CHUNK_WIDTH);
     const int cy = (wz >= 0) ? (wz / CHUNK_WIDTH) : ((wz - (CHUNK_WIDTH - 1)) / CHUNK_WIDTH);
 
@@ -79,16 +84,32 @@ BlockState World::getBlock(const int wx, const int wy, const int wz) {
     if (bz < 0) bz += CHUNK_WIDTH;
 
     if (wy < 0 || wy >= CHUNK_HEIGHT) {
-        return BlockState(BlockType::Air);
+        return {wx, wy, wz, nullptr};
     }
 
-    const Chunk* chunk = getChunk(cx, cy);
+    Chunk* chunk = world.getChunk(cx, cy);
+    return {bx, wy, bz, chunk};
+}
+
+BlockState World::getBlock(const int wx, const int wy, const int wz) {
+    const auto [bx, by, bz, chunk] = getBlockInChunk(*this, wx, wy, wz);
     if (!chunk) {
         return BlockState(BlockType::Air);
     }
 
-    return chunk->GetBlock(bx, wy, bz);
+    return chunk->GetBlock(bx, by, bz);
 }
+
+bool World::setBlock(const int wx, const int wy, const int wz, BlockType block) {
+    const auto [bx, by, bz, chunk] = getBlockInChunk(*this, wx, wy, wz);
+    if (!chunk) {
+        return false;
+    }
+
+    chunk->SetBlock(bx, by, bz, BlockState::getBasic(block));
+    return true;
+}
+
 
 void World::tick() {
     //if (!player) return;
