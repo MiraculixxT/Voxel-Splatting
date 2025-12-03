@@ -34,6 +34,7 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
     glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
 
     glm::vec3 move(0.0f);
+    const bool isSprinting = (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS);
 
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         move += forward;
@@ -45,7 +46,7 @@ void Player::ApplyMovement(GLFWwindow* window, float dt) {
         move += right;
 
     float vSpeed = Speed*2 + (IsFlying * Speed * m_Camera->MovementSpeed / 2);
-    float hSpeed = Speed + (IsFlying * Speed * m_Camera->MovementSpeed);
+    float hSpeed = Speed + (IsFlying * Speed * m_Camera->MovementSpeed) + (isSprinting * Speed);
     if (glm::length(move) > 0.0001f) {
         move = glm::normalize(move) * hSpeed * dt;
 
