@@ -79,6 +79,11 @@ struct TerrainNoise {
     }
 };
 
+struct SplinePoint {
+    float noiseVal;
+    float heightVal;
+};
+
 namespace WorldGen {
     // Fast small hash (splitmix64) — good for per-coordinate deterministic bits.
     static inline uint64_t splitmix64(uint64_t x) {
@@ -88,11 +93,38 @@ namespace WorldGen {
         return x ^ (x >> 31);
     }
 
-    // Cheap, fast deterministic check using splitmix64
-    static inline bool ChancePercentFromCoords(int wx, int wz, unsigned percent) {
+    // Cheap, fast deterministic 0-99 chance based on world coordinates
+    static inline uint64_t ChancePercentFromCoords(int wx, int wz) {
         uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx)) << 32)
                      | static_cast<uint32_t>(wz);
         uint64_t h = splitmix64(key);
-        return (h % 100ULL) < static_cast<uint64_t>(percent);
+        return (h % 100ULL);
+    }
+
+    const std::vector<SplinePoint> TERRAIN_SPLINE = {
+        { -1.0f, 30.0f },   // Deep Ocean
+        { -0.2f, 62.0f },   // Shallow Water
+        {  0.0f, 65.0f },   // Shoreline
+        {  0.1f, 68.0f },   // Flat Plains start
+        {  0.3f, 75.0f },   // Flat Plains end (Very slow rise = flat valley)
+        {  0.35f, 100.0f},  // Foothills (Steep rise starts)
+        {  0.55f, 160.0f},  // Cliffs (Very steep)
+        {  1.0f, 220.0f}    // High Peaks
+    };
+
+    static inline float GetSplineHeight(float noiseVal) {
+        // Find which two points our noise is between
+        for (size_t i = 0; i < TERRAIN_SPLINE.size() - 1; ++i) {
+            if (noiseVal >= TERRAIN_SPLINE[i].noiseVal && noiseVal <= TERRAIN_SPLINE[i+1].noiseVal) {
+                // Linear Interpolation:
+                // Percentage of how far we are between point A and point B
+                float t = (noiseVal - TERRAIN_SPLINE[i].noiseVal) /
+                          (TERRAIN_SPLINE[i+1].noiseVal - TERRAIN_SPLINE[i].noiseVal);
+
+                // Lerp
+                return TERRAIN_SPLINE[i].heightVal + t * (TERRAIN_SPLINE[i+1].heightVal - TERRAIN_SPLINE[i].heightVal);
+            }
+        }
+        return TERRAIN_SPLINE.back().heightVal; // Fallback
     }
 }

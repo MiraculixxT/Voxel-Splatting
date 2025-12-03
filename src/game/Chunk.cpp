@@ -65,61 +65,81 @@ void Chunk::GenerateSimpleTerrain(const TerrainNoise& noise) {
     // Prepare a list of trees to generate after the terrain is filled
     std::vector<Tree> treesToGen;
 
-    for (int x = 0; x < CHUNK_WIDTH; ++x) {
+for (int x = 0; x < CHUNK_WIDTH; ++x) {
         for (int z = 0; z < CHUNK_WIDTH; ++z) {
 
             float gx = static_cast<float>(x + cx * CHUNK_WIDTH);
             float gz = static_cast<float>(z + cz * CHUNK_WIDTH);
 
-            // --- A. Domain Warping ---
-            // This makes the terrain look like it "flows" rather than just being round blobs.
-            // We distort the coordinates slightly before sampling the main noise.
-            float warpX = noise.moisture.GetNoise(gx, gz) * 40.0f; // Uses moisture noise for warp
-            float warpZ = noise.peaks.GetNoise(gx, gz) * 40.0f;
+            // 1. Warping (Keep this low for the target image look, we want predictable cliffs)
+            float warp = noise.moisture.GetNoise(gx, gz) * 20.0f;
 
-            // --- B. Sample Noise ---
-            // Note: We use very low frequency for continental to get MASSIVE biomes
-            float contVal = noise.continental.GetNoise(gx + warpX, gz + warpZ);
-            float peakVal = noise.peaks.GetNoise(gx, gz); // High frequency detail
+            // 2. Base Noise
+            // We use 'continental' to look up our height on the Spline
+            float contVal = noise.continental.GetNoise(gx + warp, gz + warp);
 
-            // --- C. Calculate Height ---
-            // Use the Spline approach
-            float rawHeight = GetHeightFromCurve(contVal, std::abs(peakVal));
+            // 3. Detail Noise
+            // We only add "jaggedness" if we are high up. Valleys should be smooth.
+            float peakVal = noise.peaks.GetNoise(gx, gz);
 
-            // Apply Terracing (Stepped look from the image)
-            // Steps of 2 blocks for a stylized look, or 1 for smooth
-            rawHeight = Terrace(rawHeight, 1.0f);
+            // 4. Calculate Base Height via Spline
+            float baseHeight = WorldGen::GetSplineHeight(contVal);
 
-            int height = static_cast<int>(rawHeight);
+            // 5. Add Detail
+            // If we are in the "Cliff" zone (contVal > 0.35), add the jagged noise
+            // If we are in the valley (contVal < 0.3), keep it flat.
+            float finalHeightF = baseHeight;
+            if (contVal > 0.35f) {
+                finalHeightF += peakVal * 15.0f;
+            }
+
+            // 6. TERRACING (The "Minecraft" Look)
+            // This snaps the height to integers, creating flat spots for trees to stand on
+            // The target image implies a step size of 1 or 2.
+            finalHeightF = std::round(finalHeightF);
+
+            int height = static_cast<int>(finalHeightF);
             height = glm::clamp(height, 1, CHUNK_HEIGHT - 1);
 
-            // --- D. Biome Determination ---
-            // We use the height directly to determine the surface block,
-            // which creates consistent sedimentary layers.
-            BlockType surfaceBlock = BlockType::Grass;
-            if (height < 64) surfaceBlock = BlockType::Sand; // Underwater/Beach
-            else if (height > 160) surfaceBlock = BlockType::Snow;
-            else if (height > 120 && peakVal > 0.5f) surfaceBlock = BlockType::Stone; // Cliffs
+            // 7. Calculate "Slope" roughly
+            // We compare this block's height to the "ideal" spline height.
+            // If the Spline is rising fast, we are on a cliff wall.
+            // (Simple heuristic: High continentalness + High Height = likely cliff)
+            bool isCliff = (contVal > 0.35f && peakVal > 0.0f) || (height > 130);
 
-            // --- E. Fill Blocks ---
+            // --- FILL BLOCKS ---
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 if (y > height) {
-                    if (y <= 62) m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Water);
+                    if (y <= noise.SEA_LEVEL) m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Water);
                     else m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Air);
                 }
                 else if (y == height) {
-                    m_Blocks[x][y][z] = BlockState::getBasic(surfaceBlock);
+                    // Top Layer Logic
+                    if (height < noise.SEA_LEVEL + 2) {
+                        m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Sand);
+                    }
+                    else if (isCliff) {
+                        // If it's a steep cliff, put stone on top (or dirt), not grass
+                        // To get the "Green Valley" look, use Grass mostly, but Stone on very high peaks
+                        if (height > 150) m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Stone);
+                        else m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Grass);
+                    }
+                    else {
+                        m_Blocks[x][y][z] = BlockState::getBasic(BlockType::Grass);
 
-                    // --- F. Tree Planning ---
-                    // Only plant trees on Grass, above water, and NOT too high up
-                    // Use a noise value for density so they clump in forests
-                    if (surfaceBlock == BlockType::Grass && y > 64 && y < 140) {
-                        // "Tree Density" noise
-                        float density = noise.moisture.GetNoise(gx * 2.0f, gz * 2.0f);
-                        if (density > 0.3f) { // Forest areas
-                            // Random chance per block (pseudo-random based on coord)
-                            if (WorldGen::ChancePercentFromCoords(gx, gz, 2)) { // 2% chance per block in forest
-                                treesToGen.push_back({x, y + 1, z, 5, (int)BlockType::Wood, (int)BlockType::Leaves});
+                        // TREE PLANTING
+                        // Only plant in the "Valley" or "Foothills" (contVal < 0.6)
+                        // Don't plant on super steep cliffs
+                        if (contVal > -0.1f && contVal < 0.55f) {
+                            // Use noise for density again
+                            float density = noise.moisture.GetNoise(gx * 0.5f, gz * 0.5f); // low freq density
+                            if (density > 0.0f) { // 50% of the world is forest
+                                // Pseudo-random chance
+                                const auto rnd = WorldGen::ChancePercentFromCoords(gx, gz);
+                                if (rnd < 3) { // 3% chance per block
+                                    int treeH = 5 + (rnd % 4); // 5 to 8 blocks tall
+                                    treesToGen.push_back({x, y + 1, z, treeH, (int)BlockType::Wood, (int)BlockType::Leaves});
+                                }
                             }
                         }
                     }
@@ -134,9 +154,7 @@ void Chunk::GenerateSimpleTerrain(const TerrainNoise& noise) {
         }
     }
 
-    // --- G. Generate Trees ---
-    // Note: In a real engine, this is done in a separate "Population" pass
-    // to handle trees overlapping chunk borders. For now, we clamp to chunk.
+    // --- Generate Trees ---
     for (const auto& tree : treesToGen) {
         GenerateTree(tree);
     }
@@ -149,25 +167,30 @@ void Chunk::GenerateTree(const Tree& tree) {
         SetBlock(tree.x, tree.y + i, tree.z, BlockState::getBasic((BlockType)tree.trunkType));
     }
 
-    // Leaves (Simple Sphere/Blob)
-    int leafStart = tree.y + tree.height - 2;
-    int leafEnd = tree.y + tree.height + 1;
-    int radius = 2;
+    // Leaves: A flattened spheroid looks more natural than a perfect sphere
+    int radius = 2; // Make radius wider for taller trees if desired
+    if (tree.height > 6) radius = 3;
 
-    for (int ly = leafStart; ly <= leafEnd; ++ly) {
+    int leafBottom = tree.y + tree.height - 3;
+    int leafTop = tree.y + tree.height + 1;
+
+    for (int ly = leafBottom; ly <= leafTop; ++ly) {
         for (int lx = tree.x - radius; lx <= tree.x + radius; ++lx) {
             for (int lz = tree.z - radius; lz <= tree.z + radius; ++lz) {
 
-                // Distance check for "round" look
-                int dX = lx - tree.x;
-                int dY = ly - (tree.y + tree.height - 1); // Center roughly at top of trunk
-                int dZ = lz - tree.z;
+                int dx = lx - tree.x;
+                int dy = ly - (tree.y + tree.height - 1);
+                int dz = lz - tree.z;
 
-                // A simple distance squared check (sphere-ish)
-                if (dX*dX + dY*dY + dZ*dZ <= radius*radius + 1) {
-                    // Don't overwrite the trunk
-                    if (GetBlock(lx, ly, lz).type == BlockType::Air) {
-                         SetBlock(lx, ly, lz, BlockState::getBasic(static_cast<BlockType>(tree.leafType)));
+                // Squared distance check with a slight "squash" factor on Y
+                // This makes the tree look wider and less like a lollipop
+                if ((dx*dx) + (dy*dy*2) + (dz*dz) <= (radius*radius)) {
+                    // Randomly skip some blocks to make leaves look "fluffy" and transparent
+                    // The second image has "noisy" leaves
+                    if (((lx + ly + lz) % 7) != 0) {
+                        if (GetBlock(lx, ly, lz).type == BlockType::Air) {
+                            SetBlock(lx, ly, lz, BlockState::getBasic((BlockType)tree.leafType));
+                        }
                     }
                 }
             }
