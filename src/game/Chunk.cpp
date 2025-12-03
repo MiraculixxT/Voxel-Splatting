@@ -242,7 +242,7 @@ void Chunk::BuildMesh(World &world) {
             for (int z = 0; z < CHUNK_WIDTH; ++z) {
                 BlockState currentBlock = m_Blocks[x][y][z];
                 BlockType currentType = currentBlock.type;
-                if (BlockDatabase::IsTransparent(currentType)) {
+                if (currentType == BlockType::Air) {
                     continue;
                 }
 
@@ -255,8 +255,19 @@ void Chunk::BuildMesh(World &world) {
                 const float wx = fx + worldOffsetX;
                 const float wz = fz + worldOffsetZ;
 
+                // Helper Logic for Self-Culling
+                auto ShouldDrawFace = [&](BlockState neighbor) -> bool {
+                    // If neighbor is opaque (Stone), we never see this face.
+                    if (!BlockDatabase::IsTransparent(neighbor)) return false;
+
+                    // If neighbor is the exact same type (Water vs Water), cull the face.
+                    if (neighbor.type == currentType && currentType != BlockType::Air) return false;
+
+                    return true;
+                };
+
                 // Top Face (y+)
-                if (BlockDatabase::IsTransparent(GetBlock(x, y + 1, z))) {
+                if (ShouldDrawFace(GetBlock(x, y + 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Top);
                     AddFace({wx,     fy + 1, wz},
                             {wx,     fy + 1, wz + 1},
@@ -266,7 +277,7 @@ void Chunk::BuildMesh(World &world) {
                 }
 
                 // Bottom Face (y-)
-                if (BlockDatabase::IsTransparent(GetBlock(x, y - 1, z))) {
+                if (ShouldDrawFace(GetBlock(x, y - 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Bottom);
                     AddFace({wx,     fy, wz},
                             {wx + 1, fy, wz},
@@ -284,7 +295,7 @@ void Chunk::BuildMesh(World &world) {
                         neighborZ_pos = BlockState(BlockType::Air); // No chunk, draw face
                     }
                 } else neighborZ_pos = GetBlock(x, y, z + 1); // Internal check
-                if (BlockDatabase::IsTransparent(neighborZ_pos)) {
+                if (ShouldDrawFace(neighborZ_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx,     fy,     wz + 1},
                             {wx + 1, fy,     wz + 1},
@@ -303,7 +314,7 @@ void Chunk::BuildMesh(World &world) {
                         neighborZ_neg = BlockState(BlockType::Air); // No chunk, draw face
                     }
                 } else neighborZ_neg = GetBlock(x, y, z - 1); // Internal check
-                if (BlockDatabase::IsTransparent(neighborZ_neg)) {
+                if (ShouldDrawFace(neighborZ_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx + 1, fy,     wz},
                             {wx,     fy,     wz},
@@ -322,7 +333,7 @@ void Chunk::BuildMesh(World &world) {
                         neighborX_pos = BlockState(BlockType::Air); // No chunk, draw face
                     }
                 } else neighborX_pos = GetBlock(x + 1, y, z); // Internal check
-                if (BlockDatabase::IsTransparent(neighborX_pos)) {
+                if (ShouldDrawFace(neighborX_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx + 1, fy,     wz + 1},
                             {wx + 1, fy,     wz},
@@ -341,7 +352,7 @@ void Chunk::BuildMesh(World &world) {
                         neighborX_neg = BlockState(BlockType::Air); // No chunk, draw face
                     }
                 } else neighborX_neg = GetBlock(x - 1, y, z); // Internal check
-                if (BlockDatabase::IsTransparent(neighborX_neg)) {
+                if (ShouldDrawFace(neighborX_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
                     AddFace({wx, fy,     wz},
                             {wx, fy,     wz + 1},

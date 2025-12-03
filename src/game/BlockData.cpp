@@ -41,11 +41,10 @@ float BlockDatabase::GetTextureLayer(BlockType type, BlockFace face) {
     return 0.0f;
 }
 
-bool BlockDatabase::IsTransparent(BlockType type) {
-    // For now, only Air is transparent.
-    return type == BlockType::Air;
+bool BlockDatabase::IsTransparent(const BlockType type) {
+    return type == BlockType::Air || type == BlockType::Water || type == BlockType::Leaves;
 }
 
-bool BlockDatabase::IsTransparent(BlockState block) {
+bool BlockDatabase::IsTransparent(const BlockState block) {
     return IsTransparent(block.type);
 }
