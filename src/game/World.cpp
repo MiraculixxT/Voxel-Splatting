@@ -100,13 +100,17 @@ BlockState World::getBlock(const int wx, const int wy, const int wz) {
     return chunk->GetBlock(bx, by, bz);
 }
 
-bool World::setBlock(const int wx, const int wy, const int wz, BlockType block) {
+bool World::setBlock(const int wx, const int wy, const int wz, const BlockType block) {
     const auto [bx, by, bz, chunk] = getBlockInChunk(*this, wx, wy, wz);
     if (!chunk) {
         return false;
     }
 
     chunk->SetBlock(bx, by, bz, BlockState::getBasic(block));
+
+    // Update this chunk
+    chunk->BuildMesh(*this);
+    chunkRenderer->UploadMesh(chunk->cx, chunk->cz, chunk->GetMeshVertices());
     return true;
 }
 

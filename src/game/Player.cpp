@@ -23,7 +23,31 @@ void Player::Update(const float dt) {
 
 void Player::ProcessInput(GLFWwindow* window, const float dt) {
     ApplyMovement(window, dt);
+    ApplyBlockInteraction(window, dt);
 }
+
+void Player::ApplyBlockInteraction(GLFWwindow *window, float dt) {
+    if (cooldownBreak > 0.0f) cooldownBreak -= dt;
+    if (cooldownPlace > 0.0f) cooldownPlace -= dt;
+
+    if (cooldownBreak <= 0.0f && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
+        // Break block
+        if (const RaycastResult result = Raycast(5.0f); result.hit) {
+            result.print();
+            cooldownBreak = 0.5f; // 500ms cooldown
+            m_World->setBlock(result.blockPos.x, result.blockPos.y, result.blockPos.z, BlockType::Air);
+        }
+    }
+    else if (cooldownPlace <= 0.0f && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+        // Place block
+        if (const RaycastResult result = Raycast(5.0f); result.hit) {
+            result.print();
+            cooldownPlace = 0.2f; // 200ms cooldown
+            m_World->setBlock(result.prevBlockPos.x, result.prevBlockPos.y, result.prevBlockPos.z, BlockType::Stone);
+        }
+    }
+}
+
 
 void Player::ApplyMovement(GLFWwindow* window, float dt) {
     glm::vec3 forward = m_Camera->Front;
@@ -173,3 +197,34 @@ bool Player::IsCollidingAt(const glm::vec3& pos) const {
 
     return false;
 }
+
+RaycastResult Player::Raycast(float maxDistance) const {
+    RaycastResult result;
+    glm::vec3 origin = m_Camera->Position;
+    glm::vec3 direction = m_Camera->Front;
+
+    glm::ivec3 currentBlockPos = glm::ivec3(floor(origin.x), floor(origin.y), floor(origin.z));
+    result.prevBlockPos = currentBlockPos;
+
+    glm::vec3 step = glm::normalize(direction);
+    float t = 0.0f;
+
+    while (t < maxDistance) {
+        t += 0.01f;
+        glm::vec3 pos = origin + t * direction;
+        glm::ivec3 newBlockPos = glm::ivec3(floor(pos.x), floor(pos.y), floor(pos.z));
+
+        if (newBlockPos != currentBlockPos) {
+            result.prevBlockPos = currentBlockPos;
+            currentBlockPos = newBlockPos;
+            if (IsBlockSolid(currentBlockPos.x, currentBlockPos.y, currentBlockPos.z)) {
+                result.hit = true;
+                result.blockPos = currentBlockPos;
+                return result;
+            }
+        }
+    }
+
+    return result;
+}
+

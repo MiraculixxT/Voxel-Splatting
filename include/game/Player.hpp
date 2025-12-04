@@ -1,8 +1,23 @@
 #pragma once
 #include <glm/glm.hpp>
 #define GLFW_INCLUDE_NONE
+#include <cstdio>
 #include <GLFW/glfw3.h>
+#include "game/Block.hpp"
 
+
+struct RaycastResult {
+    bool hit = false;
+    glm::ivec3 blockPos;
+    glm::ivec3 prevBlockPos;
+
+    void print() const {
+        printf("Result: hit=%d, block=(%d,%d,%d), prevBlock=(%d,%d,%d)\n",
+            hit ? 1 : 0,
+            blockPos.x, blockPos.y, blockPos.z,
+            prevBlockPos.x, prevBlockPos.y, prevBlockPos.z);
+    }
+};
 
 class Camera;
 class World;
@@ -13,6 +28,7 @@ public:
 
     void Update(float dt);
     void ProcessInput(GLFWwindow* window, float dt);
+    void ApplyBlockInteraction(GLFWwindow *window, float dt);
 
     glm::vec3 Position;
     float Speed = 4.0f;
@@ -30,4 +46,9 @@ private:
 
     void ApplyGravity(float dt);
     void ApplyMovement(GLFWwindow* window, float dt);
+
+    RaycastResult Raycast(float maxDistance) const;
+
+    float cooldownBreak = 0.0f;
+    float cooldownPlace = 0.0f;
 };

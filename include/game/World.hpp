@@ -41,6 +41,7 @@ public:
     ChunkStorage& getChunks() { return chunks; }
 
     BlockState getBlock(int wx, int wy, int wz);
+    // set block at world coordinates, returns true if successful. Also, RERENDERS the chunk!
     bool setBlock(int wx, int wy, int wz, BlockType block);
 
     void setPlayer(Player* i_player) { player = i_player; }
