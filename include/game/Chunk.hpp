@@ -13,6 +13,17 @@ constexpr int CHUNK_HEIGHT = 256;
 class World;
 struct TerrainNoise;
 
+struct Splat {
+    glm::vec3 position;  // world-space center
+    glm::vec3 scale;     // radii (sigma_x, sigma_y, sigma_z)
+    glm::vec3 normal;    // orientation of the splat plane
+    glm::vec3 color;     // albedo
+    float opacity;
+
+    glm::vec2 uv;     // texture coordinate
+    float     layer;  // texture layer in atlas
+};
+
 /**
  * @class Chunk
  * @brief Represents a vertical column of blocks in the world.
@@ -60,6 +71,18 @@ public:
     void BuildMesh(World& world);
 
     /**
+     * @brief Builds the chunk's Gaussian splat representation.
+     * Similar to BuildMesh, but generates splats for visible blocks.
+     * @param world The world object, used to query neighbor blocks.
+     */
+    void BuildSplats(World& world);
+
+    /**
+     * @brief Gets the generated splats after BuildSplats() is called.
+     */
+    const std::vector<Splat>& GetSplats() const { return m_Splats; }
+
+    /**
      * @brief Gets the generated mesh vertices after BuildMesh() is called.
      * Vertex format is (x, y, z, u, v, layer) - 6 floats.
      */
@@ -84,4 +107,7 @@ private:
     // Render data
     std::vector<float> m_MeshVertices;
     int m_VertexCount;
+
+    // Gaussian splat data for this chunk
+    std::vector<Splat> m_Splats;
 };

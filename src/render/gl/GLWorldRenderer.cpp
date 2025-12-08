@@ -3,10 +3,13 @@
 #include "Application.hpp"
 #include "render/gl/GLTextureUtils.hpp"
 
+#include <cmath>
+
 
 GLWorldRenderer::~GLWorldRenderer() {
     delete m_BlockShader;
     delete m_ChunkRenderer;
+    delete m_SplatRenderer;
     glDeleteTextures(1, &m_TextureArray);
 }
 
@@ -34,13 +37,19 @@ void GLWorldRenderer::Init() {
 
     // --- 8. Create World/Chunk ---
     m_ChunkRenderer = new GLChunkRenderer(m_Camera, m_Settings);
+    m_SplatRenderer = new GLSplatRenderer();
+
+    // Register renderers in world so the mesh worker can upload to them
+
+    // Build and upload initial meshes and splats for already generated chunks
     for (auto [cx, column] : m_World.getChunks()) {
         for (auto& [cy, chunk] : column) {
             chunk->BuildMesh(m_World);
+            chunk->BuildSplats(m_World);
             m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+            m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
         }
     }
-
 }
 
 void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const is not possible
@@ -76,5 +85,18 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     const int fromZ = (center.y - renderDistance) / CHUNK_WIDTH - 1;
     const int toZ   = (center.y + renderDistance) / CHUNK_WIDTH;
     m_ChunkRenderer->Render(frustum, fromX, toX, fromZ, toZ);
-}
 
+    // Render Gaussian splats using the same view-projection
+    if (m_SplatRenderer) {
+        const glm::mat4 viewProj = projection * view;
+
+        // camera chunk coordinates
+        const int camChunkX = static_cast<int>(std::floor(m_Camera.Position.x)) / CHUNK_WIDTH;
+        const int camChunkZ = static_cast<int>(std::floor(m_Camera.Position.z)) / CHUNK_WIDTH;
+
+        // how many chunks around the player to draw splats
+        const int SPLAT_RENDER_DISTANCE_CHUNKS = 2;
+
+        m_SplatRenderer->Draw(viewProj, camChunkX, camChunkZ, SPLAT_RENDER_DISTANCE_CHUNKS);
+    }
+}

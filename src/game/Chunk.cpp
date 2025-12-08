@@ -389,3 +389,195 @@ void Chunk::BuildMesh(World &world) {
 
     m_VertexCount = m_MeshVertices.size() / 6;
 }
+
+
+void Chunk::BuildSplats(World& world) {
+    m_Splats.clear();
+
+    const float worldOffsetX = static_cast<float>(cx * CHUNK_WIDTH);
+    const float worldOffsetZ = static_cast<float>(cz * CHUNK_WIDTH);
+
+    for (int x = 0; x < CHUNK_WIDTH; ++x) {
+        for (int y = 0; y < CHUNK_HEIGHT; ++y) {
+            for (int z = 0; z < CHUNK_WIDTH; ++z) {
+                BlockState currentBlock = m_Blocks[x][y][z];
+                BlockType currentType   = currentBlock.type;
+                if (currentType == BlockType::Air) continue;
+
+                // Block center in world space
+                glm::vec3 center(
+                        static_cast<float>(x) + worldOffsetX + 0.5f,
+                        static_cast<float>(y) + 0.5f,
+                        static_cast<float>(z) + worldOffsetZ + 0.5f
+                );
+
+                auto neighborIsTransparent = [&](const BlockState& n) {
+                    return BlockDatabase::IsTransparent(n);
+                };
+
+                // Helper: generates a 16x16 grid of splats on a face with a given normal
+                auto emitFaceSplats = [&](const glm::vec3& faceNormal, BlockFace blockFace) {
+                    // 0.5 from the center to the block surface, plus a small epsilon
+                    const float surfaceOffset = 0.51f;
+
+                    glm::vec3 n = glm::normalize(faceNormal);
+                    glm::vec3 tangent;
+                    glm::vec3 bitangent;
+
+                    // Tangent/Bitangent so wählen, dass sie zur Mesh-UV-Ausrichtung passen
+                    if (n.y > 0.5f) {
+                        // Top (y+): u = +x, v = +z
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 0.0f, 1.0f);
+                    } else if (n.y < -0.5f) {
+                        // Bottom (y-): gleiche Ausrichtung wie Top
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 0.0f, 1.0f);
+                    } else if (n.z > 0.5f) {
+                        // Front (z+): u = +x, v = +y
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else if (n.z < -0.5f) {
+                        // Back (z-): u = -x, v = +y (entspricht Mesh-Flip)
+                        tangent   = glm::vec3(-1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else if (n.x > 0.5f) {
+                        // Right (x+): u = -z, v = +y
+                        tangent   = glm::vec3(0.0f, 0.0f, -1.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else { // n.x < -0.5f, Left (x-)
+                        // Left (x-): u = +z, v = +y
+                        tangent   = glm::vec3(0.0f, 0.0f, 1.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    }
+
+
+                    const int   GRID_RES  = 10;
+                    const float halfSize  = 0.5f;
+                    const float padding   = 1.0f;
+                    const float step      = (2.0f * halfSize * padding) / float(GRID_RES);
+
+                    const float sigmaWorld = 0.05f;
+                    glm::vec3   scale      = glm::vec3(sigmaWorld);
+
+                    glm::vec3 baseColor(1.0f);
+                    switch (currentType) {
+                        case BlockType::Grass:  baseColor = glm::vec3(0.3f, 0.8f, 0.3f); break;
+                        case BlockType::Dirt:   baseColor = glm::vec3(0.4f, 0.3f, 0.2f); break;
+                        case BlockType::Stone:  baseColor = glm::vec3(0.6f, 0.6f, 0.6f); break;
+                        case BlockType::Sand:   baseColor = glm::vec3(0.9f, 0.85f, 0.6f); break;
+                        case BlockType::Water:  baseColor = glm::vec3(0.2f, 0.4f, 0.8f); break;
+                        case BlockType::Leaves: baseColor = glm::vec3(0.4f, 0.9f, 0.4f); break;
+                        case BlockType::Wood:   baseColor = glm::vec3(0.5f, 0.3f, 0.15f); break;
+                        default: break;
+                    }
+
+                    for (int iy = 0; iy < GRID_RES; ++iy) {
+                        for (int ix = 0; ix < GRID_RES; ++ix) {
+                            // Grid in [-halfSize*padding, +halfSize*padding]
+                            float u = -halfSize * padding + (ix + 0.5f) * step;
+                            float v = -halfSize * padding + (iy + 0.5f) * step;
+
+                            glm::vec3 pos =
+                                    center +
+                                    n * surfaceOffset +
+                                    tangent   * u +
+                                    bitangent * v;
+
+                            Splat s;
+                            s.position = pos;
+                            s.scale    = scale;
+                            s.normal   = n;
+                            s.color    = baseColor;
+                            s.opacity  = 1.0f;
+
+                            float texU = (ix + 0.5f) / GRID_RES;
+                            float texV = (iy + 0.5f) / GRID_RES;
+                            s.uv    = glm::vec2(texU, texV);
+                            s.layer = BlockDatabase::GetTextureLayer(currentType, blockFace);
+
+                            m_Splats.push_back(s);
+                        }
+                    }
+                };
+
+                // y+ (top)
+                if (neighborIsTransparent(GetBlock(x, y + 1, z))) {
+                    emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                }
+                // y- (bottom)
+                if (neighborIsTransparent(GetBlock(x, y - 1, z))) {
+                    emitFaceSplats(glm::vec3(0.0f, -1.0f, 0.0f), BlockFace::Bottom);
+                }
+
+                // z+ (front)
+                {
+                    BlockState n;
+                    if (z + 1 >= CHUNK_WIDTH) {
+                        if (Chunk* c = world.getChunk(cx, cz + 1)) {
+                            n = c->GetBlock(x, y, 0);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x, y, z + 1);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(0.0f, 0.0f, 1.0f), BlockFace::Side);
+                    }
+                }
+
+                // z- (back)
+                {
+                    BlockState n;
+                    if (z - 1 < 0) {
+                        if (Chunk* c = world.getChunk(cx, cz - 1)) {
+                            n = c->GetBlock(x, y, CHUNK_WIDTH - 1);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x, y, z - 1);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(0.0f, 0.0f, -1.0f), BlockFace::Side);
+                    }
+                }
+
+                // x+ (right)
+                {
+                    BlockState n;
+                    if (x + 1 >= CHUNK_WIDTH) {
+                        if (Chunk* c = world.getChunk(cx + 1, cz)) {
+                            n = c->GetBlock(0, y, z);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x + 1, y, z);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(1.0f, 0.0f, 0.0f), BlockFace::Side);
+                    }
+                }
+
+                // x- (left)
+                {
+                    BlockState n;
+                    if (x - 1 < 0) {
+                        if (Chunk* c = world.getChunk(cx - 1, cz)) {
+                            n = c->GetBlock(CHUNK_WIDTH - 1, y, z);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x - 1, y, z);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(-1.0f, 0.0f, 0.0f), BlockFace::Side);
+                    }
+                }
+            }
+        }
+    }
+}

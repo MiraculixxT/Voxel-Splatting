@@ -4,6 +4,7 @@
 #include "game/Settings.hpp"
 #include "game/World.hpp"
 #include "render/core/Camera.hpp"
+#include "GLSplatRenderer.hpp"
 
 class GLWorldRenderer {
 public:
@@ -14,12 +15,14 @@ public:
     void Init();
     void RenderWorld();
     GLChunkRenderer* GetChunkRenderer() const { return m_ChunkRenderer; }
+    GLSplatRenderer* GetSplatRenderer() const { return m_SplatRenderer; }
 
 private:
     Camera& m_Camera;
     Settings& m_Settings;
     World& m_World;
     GLChunkRenderer* m_ChunkRenderer = nullptr;
+    GLSplatRenderer* m_SplatRenderer = nullptr;
 
     GLShader* m_BlockShader = nullptr;
     unsigned int m_TextureArray = 0;

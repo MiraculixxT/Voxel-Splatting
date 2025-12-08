@@ -14,6 +14,8 @@
 #include "thread"
 #include "WorldGen.hpp"
 
+#include "render/gl/GLSplatRenderer.hpp"
+
 
 class World {
 public:
@@ -65,6 +67,8 @@ private:
     Player* player = nullptr;
 
     GLChunkRenderer* chunkRenderer = nullptr;
+    GLSplatRenderer* splatRenderer = nullptr;
+
 
     // Async meshing system
     struct MeshTask {

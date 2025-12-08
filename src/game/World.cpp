@@ -1,4 +1,5 @@
 #include "game/World.hpp"
+#include "render/gl/GLSplatRenderer.hpp"
 
 #include <queue>
 #include <vector>   // for empty vertex lists when unloading
@@ -148,6 +149,9 @@ void World::tick() {
                 if (noise.regen || dist > unloadRadiusSq) {
                     // Clear the mesh in the renderer so the chunk is no longer rendered
                     chunkRenderer->RemoveMesh(cx, cy);
+                    if (splatRenderer) {
+                        splatRenderer->RemoveSplats(cx, cy);
+                    }
 
                     itY = innerMap.erase(itY);
                 } else {
@@ -276,6 +280,7 @@ void World::meshWorker() {
         }
 
         task.chunk->BuildMesh(*this);
+        task.chunk->BuildSplats(*this);
 
         {
             std::lock_guard<std::mutex> lock(doneQueueMutex);
@@ -298,6 +303,9 @@ void World::uploadFinishedMeshes() {
         // Only upload if the chunk still exists
         if (chunkRenderer && hasChunk(task.cx, task.cy)) {
             chunkRenderer->UploadMesh(task.cx, task.cy, task.chunk->GetMeshVertices());
+        }
+        if (splatRenderer && hasChunk(task.cx, task.cy)) {
+            splatRenderer->UploadSplats(task.cx, task.cy, task.chunk->GetSplats());
         }
     }
 }
