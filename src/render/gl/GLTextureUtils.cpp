@@ -17,20 +17,18 @@ unsigned int GLTextureUtils::LoadTexture2DArray(const std::vector<std::string>& 
     stbi_set_flip_vertically_on_load(true); // Flip textures vertically
 
     int width = 0, height = 0, nrChannels = 0;
-    int layerCount = textureFiles.size();
+    const int desiredChannels = 4; // always load as RGBA
+    int layerCount = static_cast<int>(textureFiles.size());
     unsigned char* first_data = nullptr;
 
     // --- 1. Load first image to get dimensions --- TODO: Allow different sizes with scaling?
-    first_data = stbi_load(textureFiles[0].c_str(), &width, &height, &nrChannels, 0);
+    first_data = stbi_load(textureFiles[0].c_str(), &width, &height, &nrChannels, desiredChannels);
     if (!first_data) {
         std::cerr << "TEXTURE_ARRAY: Failed to load first image: " << textureFiles[0] << std::endl;
         return 0;
     }
 
-    GLenum format = GL_RGB;
-    if (nrChannels == 1) format = GL_RED;
-    else if (nrChannels == 3) format = GL_RGB;
-    else if (nrChannels == 4) format = GL_RGBA;
+    GLenum format = GL_RGBA;
 
     // --- 2. Create Texture Array ---
     unsigned int textureArrayID;
@@ -40,12 +38,12 @@ unsigned int GLTextureUtils::LoadTexture2DArray(const std::vector<std::string>& 
     // Allocate storage for the whole array
     glTexImage3D(GL_TEXTURE_2D_ARRAY,
         0,                 // mipmap level
-        format,            // internal format
+        GL_RGBA8,          // internal format (8-bit RGBA)
         width,             // width
         height,            // height
         layerCount,        // number of layers
         0,                 // border
-        format,            // format
+        GL_RGBA,           // format
         GL_UNSIGNED_BYTE,  // type
         NULL);             // data (we'll load it layer by layer)
 
@@ -54,7 +52,7 @@ unsigned int GLTextureUtils::LoadTexture2DArray(const std::vector<std::string>& 
         0,                 // mipmap level
         0, 0, 0,           // x, y, z offsets (z is layer)
         width, height, 1,  // width, height, depth (1 layer)
-        format,
+        GL_RGBA,
         GL_UNSIGNED_BYTE,
         first_data);
     stbi_image_free(first_data);
@@ -62,13 +60,13 @@ unsigned int GLTextureUtils::LoadTexture2DArray(const std::vector<std::string>& 
     // --- 4. Load remaining images into other layers ---
     for (int i = 1; i < layerCount; ++i) {
         int imgWidth, imgHeight, imgChannels;
-        unsigned char* data = stbi_load(textureFiles[i].c_str(), &imgWidth, &imgHeight, &imgChannels, 0);
+        unsigned char* data = stbi_load(textureFiles[i].c_str(), &imgWidth, &imgHeight, &imgChannels, desiredChannels);
         if (!data) {
             std::cerr << "TEXTURE_ARRAY: Failed to load image: " << textureFiles[i] << std::endl;
             continue;
         }
 
-        if (imgWidth != width || imgHeight != height || imgChannels != nrChannels) {
+        if (imgWidth != width || imgHeight != height) {
             std::cerr << "TEXTURE_ARRAY: Image " << textureFiles[i] << " has different dimensions!" << std::endl;
             stbi_image_free(data);
             continue;
@@ -78,7 +76,7 @@ unsigned int GLTextureUtils::LoadTexture2DArray(const std::vector<std::string>& 
             0,
             0, 0, i,           // z offset is now 'i'
             width, height, 1,
-            format,
+            GL_RGBA,
             GL_UNSIGNED_BYTE,
             data);
 

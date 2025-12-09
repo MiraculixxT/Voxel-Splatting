@@ -187,6 +187,13 @@ void GLSplatRenderer::RemoveSplats(int cx, int cz) {
     buffers.erase(it);
 }
 
+void GLSplatRenderer::SetLighting(const glm::mat4& lightViewProj, GLuint shadowTexture, const glm::vec3& lightDir)
+{
+    m_LightViewProj = lightViewProj;
+    m_ShadowTexture = shadowTexture;
+    m_LightDir      = lightDir;
+}
+
 void GLSplatRenderer::Draw(const glm::mat4& viewProj,
                            int camChunkX, int camChunkZ,
                            int maxChunkDistance)
@@ -197,9 +204,30 @@ void GLSplatRenderer::Draw(const glm::mat4& viewProj,
 
     glUseProgram(shaderProgram);
 
-    GLint locVP = glGetUniformLocation(shaderProgram, "uViewProj");
-    if (locVP >= 0) {
-        glUniformMatrix4fv(locVP, 1, GL_FALSE, glm::value_ptr(viewProj));
+    // Set view-projection matrix for the current camera
+    GLint loc = glGetUniformLocation(shaderProgram, "uViewProj");
+    if (loc >= 0) {
+        glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(viewProj));
+    }
+
+    // Set light view-projection matrix for shadow mapping
+    loc = glGetUniformLocation(shaderProgram, "lightViewProj");
+    if (loc >= 0) {
+        glUniformMatrix4fv(loc, 1, GL_FALSE, glm::value_ptr(m_LightViewProj));
+    }
+
+    // Set light direction
+    loc = glGetUniformLocation(shaderProgram, "lightDir");
+    if (loc >= 0) {
+        glUniform3fv(loc, 1, glm::value_ptr(m_LightDir));
+    }
+
+    // Bind shadow map texture to unit 1 and set sampler
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_ShadowTexture);
+    loc = glGetUniformLocation(shaderProgram, "uShadowMap");
+    if (loc >= 0) {
+        glUniform1i(loc, 1);
     }
 
     glEnable(GL_DEPTH_TEST);

@@ -20,9 +20,11 @@ out VS_OUT {
     vec2 localPos; // für Gaussian im Fragment
     vec2 uv;       // Texturkoordinate
     float layer;   // Atlas-Layer
+    vec4 lightSpacePos; // Position im Licht-Raum für Shadow Mapping
 } vs_out;
 
 uniform mat4 uViewProj;
+uniform mat4 lightViewProj;
 
 void main()
 {
@@ -43,6 +45,9 @@ void main()
         inPosition +
         tangent   * (p.x * inScale.x) +
         bitangent * (p.y * inScale.y);
+
+    // Position des Splat-Pixels im Licht-Raum (für Shadow Mapping)
+    vs_out.lightSpacePos = lightViewProj * vec4(worldPos, 1.0);
 
     gl_Position = uViewProj * vec4(worldPos, 1.0);
 

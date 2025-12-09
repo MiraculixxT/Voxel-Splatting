@@ -49,6 +49,8 @@ public:
      */
     std::size_t GetTotalVertexCount() const;
 
+    void RenderAll(int fromX, int toX, int fromZ, int toZ);
+
 private:
     // Struct to hold OpenGL buffer info for a single chunk
     struct ChunkMesh {

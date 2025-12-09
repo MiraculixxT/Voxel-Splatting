@@ -124,3 +124,23 @@ void GLChunkRenderer::Render(const ViewFrustum &frustum, const int fromX, const 
 std::size_t GLChunkRenderer::GetTotalVertexCount() const {
     return m_loadedVertexCount;
 }
+
+void GLChunkRenderer::RenderAll(int fromX, int toX, int fromZ, int toZ)
+{
+    m_loadedVertexCount = 0;
+
+    for (int x = fromX; x <= toX; ++x) {
+        for (int z = fromZ; z <= toZ; ++z) {
+            auto it = m_ChunkMeshes.find({x, z});
+            if (it != m_ChunkMeshes.end()) {
+                const auto& mesh = it->second;
+                if (mesh.vertexCount > 0) {
+                    m_loadedVertexCount += mesh.vertexCount;
+                    glBindVertexArray(mesh.VAO);
+                    glDrawArrays(GL_TRIANGLES, 0, mesh.vertexCount);
+                }
+            }
+        }
+    }
+    glBindVertexArray(0);
+}
