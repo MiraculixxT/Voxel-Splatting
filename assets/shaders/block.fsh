@@ -83,8 +83,17 @@ void main() {
     float fogFactor = 0.0;
     if (fogEnd > fogStart) {
         fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
+        // make fog grow a bit smoother and later
+        fogFactor = fogFactor * fogFactor;
     }
-    vec3 fogColor = vec3(0.6f, 0.8f, 0.95f); // slightly warmer sky color
+
+    // Fog color: match the sky gradient along the view direction (same as in sky.fsh)
+    vec3 viewDir = normalize(WorldPos - cameraPosition);
+    float tSky = clamp(viewDir.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 horizonColor = vec3(0.5, 0.8, 1.0);
+    vec3 zenithColor  = vec3(0.15, 0.35, 0.9);
+    vec3 fogColor = mix(horizonColor, zenithColor, tSky);
+
     vec3 fogMixed = mix(litColor, fogColor, fogFactor);
 
     FragColor = vec4(fogMixed, texColor.a);

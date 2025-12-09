@@ -30,9 +30,15 @@ private:
     // Shadow + Light
     GLShadowMap m_ShadowMap;
     GLShader* m_ShadowShader = nullptr;
+    glm::vec3 m_SunDir;          // Direction towards the sun in world space
     glm::mat4 m_LightViewProj;
 
     GLShader* m_BlockShader = nullptr;
     unsigned int m_TextureArray = 0;
 
+    // Sky rendering
+    GLShader* m_SkyShader = nullptr;
+    unsigned int m_SkyVAO = 0;
+
+    GLShader* m_SunFlareShader = nullptr;
 };
