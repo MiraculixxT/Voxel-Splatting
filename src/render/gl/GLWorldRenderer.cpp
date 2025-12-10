@@ -15,8 +15,12 @@ GLWorldRenderer::~GLWorldRenderer() {
     delete m_ShadowShader;
     delete m_SkyShader;
     delete m_SunFlareShader;
+    delete m_GodrayShader;
+    delete m_GodrayOcclusionShader;
     glDeleteTextures(1, &m_TextureArray);
     glDeleteVertexArrays(1, &m_SkyVAO);
+    glDeleteFramebuffers(1, &m_GodrayOcclusionFBO);
+    glDeleteTextures(1, &m_GodrayOcclusionTex);
 }
 
 void GLWorldRenderer::Init() {
@@ -32,6 +36,41 @@ void GLWorldRenderer::Init() {
 
     // Setup sun flare shader (lens glare)
     m_SunFlareShader = new GLShader("assets/shaders/sun_flare.vsh", "assets/shaders/sun_flare.fsh");
+
+    m_GodrayShader = new GLShader(
+            "assets/shaders/godrays.vsh",
+            "assets/shaders/godrays.fsh"
+    );
+
+    m_GodrayOcclusionShader = new GLShader(
+            "assets/shaders/godrays_occlusion.vsh",
+            "assets/shaders/godrays_occlusion.fsh"
+    );
+
+    // Create low-resolution occlusion texture and FBO for god rays
+    {
+        int occWidth  = SCR_WIDTH  / 2;
+        int occHeight = SCR_HEIGHT / 2;
+
+        glGenTextures(1, &m_GodrayOcclusionTex);
+        glBindTexture(GL_TEXTURE_2D, m_GodrayOcclusionTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, occWidth, occHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        glGenFramebuffers(1, &m_GodrayOcclusionFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_GodrayOcclusionFBO);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_GodrayOcclusionTex, 0);
+
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            std::cerr << "Failed to create godray occlusion FBO" << std::endl;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
 
     // Initialize shadow map (resolution can be tuned)
     if (!m_ShadowMap.init(2048, 2048)) {
@@ -190,8 +229,61 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
         m_SplatRenderer->Draw(viewProj, camChunkX, camChunkZ, SPLAT_RENDER_DISTANCE_CHUNKS);
     }
 
-    // --- Sun flare (lens glare) overlay ---
-    if (m_SunFlareShader) {
+    // --- Godray occlusion pass: render geometry into low-res occlusion texture ---
+    if (m_GodrayOcclusionShader) {
+        // Save current framebuffer and viewport
+        GLint prevFBO = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFBO);
+
+        GLint prevViewport[4];
+        glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+        int occWidth  = SCR_WIDTH  / 2;
+        int occHeight = SCR_HEIGHT / 2;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_GodrayOcclusionFBO);
+        glViewport(0, 0, occWidth, occHeight);
+
+        // Clear to 1.0 (sky passes through), occlusion shader draws geometry as 0.0
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_GodrayOcclusionShader->use();
+        m_GodrayOcclusionShader->setMat4("projection", projection);
+        m_GodrayOcclusionShader->setMat4("view", view);
+        glm::mat4 occModel(1.0f);
+        m_GodrayOcclusionShader->setMat4("model", occModel);
+        // Bind block texture array so occlusion shader can sample alpha (for leaves etc.)
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, m_TextureArray);
+        m_GodrayOcclusionShader->setInt("textureArray", 0);
+
+        // Reuse same chunk range as normal rendering for occlusion
+        ViewFrustum occFrustum;
+        occFrustum.Update(projection * view);
+        const glm::ivec2 occCenter(std::floor(m_Camera.Position.x), std::floor(m_Camera.Position.z));
+        const int occRenderDistance = std::floor(m_Settings.GLTo);
+        const int occFromX = (occCenter.x - occRenderDistance) / CHUNK_WIDTH - 1;
+        const int occToX   = (occCenter.x + occRenderDistance) / CHUNK_WIDTH;
+        const int occFromZ = (occCenter.y - occRenderDistance) / CHUNK_WIDTH - 1;
+        const int occToZ   = (occCenter.y + occRenderDistance) / CHUNK_WIDTH;
+
+        // Render all chunks into occlusion buffer using current shader
+        m_ChunkRenderer->RenderAll(occFromX, occToX, occFromZ, occToZ);
+
+        // Restore previous framebuffer and viewport
+        glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
+        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    // --- Compute sun screen position and base intensity for post effects (flare, godrays) ---
+    glm::vec2 sunScreen(0.5f, 0.5f);
+    float sunIntensity = 0.0f;
+    bool sunOnScreen = false;
+
+    if (m_SunFlareShader || m_GodrayShader) {
         // Place the sun at a finite distance in front of the camera along -m_SunDir
         glm::vec3 sunDirToSun = -m_SunDir;
         float sunDistance = 100.0f; // must be within camera far plane (GLTo)
@@ -203,7 +295,6 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
         if (sunClip.w > 0.0f) {
             glm::vec3 sunNdc = glm::vec3(sunClip) / sunClip.w;
 
-            glm::vec2 sunScreen;
             sunScreen.x = sunNdc.x * 0.5f + 0.5f;
             sunScreen.y = sunNdc.y * 0.5f + 0.5f;
 
@@ -213,27 +304,59 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
 
                 // Intensity based on distance to screen center (strongest in the middle)
                 float centerDist = glm::length(sunScreen - glm::vec2(0.5f, 0.5f));
-                float intensity = glm::clamp(1.0f - centerDist * 1.5f, 0.0f, 1.0f);
+                sunIntensity = glm::clamp(1.0f - centerDist * 1.5f, 0.0f, 1.0f);
 
-                if (intensity > 0.0f) {
-                    glDisable(GL_DEPTH_TEST);
-                    glEnable(GL_BLEND);
-                    // Additive blending so the flare really adds light
-                    glBlendFunc(GL_ONE, GL_ONE);
-
-                    m_SunFlareShader->use();
-                    m_SunFlareShader->setVec2("uSunScreenPos", sunScreen);
-                    m_SunFlareShader->setFloat("uIntensity", intensity);
-
-                    glBindVertexArray(m_SkyVAO);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
-                    glBindVertexArray(0);
-
-                    glDisable(GL_BLEND);
-                    glEnable(GL_DEPTH_TEST);
-                }
+                sunOnScreen = (sunIntensity > 0.0f);
             }
         }
+    }
+
+    // --- Sun flare (lens glare) overlay ---
+    if (m_SunFlareShader && sunOnScreen && sunIntensity > 0.0f) {
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        // Additive blending so the flare really adds light
+        glBlendFunc(GL_ONE, GL_ONE);
+
+        m_SunFlareShader->use();
+        m_SunFlareShader->setVec2("uSunScreenPos", sunScreen);
+        m_SunFlareShader->setFloat("uIntensity", sunIntensity);
+
+        // Bind occlusion texture so flare can be hidden when sun is behind geometry
+        if (m_GodrayOcclusionTex != 0) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, m_GodrayOcclusionTex);
+            m_SunFlareShader->setInt("uOcclusionTex", 0);
+        }
+
+        glBindVertexArray(m_SkyVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    if (m_GodrayShader && sunOnScreen && sunIntensity > 0.0f) {
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE); // additiv
+
+        m_GodrayShader->use();
+        m_GodrayShader->setVec2("uSunScreenPos", sunScreen);
+        m_GodrayShader->setFloat("uIntensity", sunIntensity);
+
+        // Bind occlusion texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_GodrayOcclusionTex);
+        m_GodrayShader->setInt("uOcclusionTex", 0);
+
+        glBindVertexArray(m_SkyVAO); // Fullscreen-Triangle VAO wie beim Sun-Flare
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+
+        glDisable(GL_BLEND);
+        glEnable(GL_DEPTH_TEST);
     }
 }
 

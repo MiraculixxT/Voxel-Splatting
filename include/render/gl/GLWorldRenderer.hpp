@@ -41,4 +41,10 @@ private:
     unsigned int m_SkyVAO = 0;
 
     GLShader* m_SunFlareShader = nullptr;
+
+    // Godrays
+    GLShader* m_GodrayShader = nullptr;
+    GLuint m_GodrayOcclusionFBO = 0;
+    GLuint m_GodrayOcclusionTex = 0;
+    GLShader* m_GodrayOcclusionShader = nullptr;
 };

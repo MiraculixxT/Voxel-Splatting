@@ -3,8 +3,9 @@
 in vec2 vUV;
 out vec4 FragColor;
 
-uniform vec2 uSunScreenPos;   // sun position in screen UV (0..1)
-uniform float uIntensity;     // 0..1, how strong the flare should be
+uniform vec2 uSunScreenPos;    // sun position in screen UV (0..1)
+uniform float uIntensity;      // 0..1, how strong the flare should be
+uniform sampler2D uOcclusionTex; // occlusion mask (1 = sky, 0 = blocked)
 
 // Smooth radial falloff (Gaussian-ish)
 float radialGaussian(float d, float radius)
@@ -35,6 +36,14 @@ void main()
     vec2 center = vec2(0.5, 0.5);
     vec2 axis   = normalize(center - uSunScreenPos + 1e-5); // axis from sun toward center
 
+    // Sample occlusion at the sun position. If the sun is fully behind geometry,
+    // we skip drawing the flare.
+    float occSun = texture(uOcclusionTex, uSunScreenPos).r;
+    if (occSun <= 0.05) {
+        FragColor = vec4(0.0);
+        return;
+    }
+
     // --- 1. Primary sun core and halo ---
 
     float d = distance(vUV, uSunScreenPos);
@@ -50,9 +59,9 @@ void main()
 
     // --- 2. Ghost elements along center <-> sun axis ---
 
-    // Positions along the axis – values tuned to keep ghosts fairly close
-    vec2 g1Pos = center + axis * 0.25;   // between center and sun
-    vec2 g2Pos = center + axis * 0.55;   // a bit weiter Richtung Sonne
+    // Positions entlang der Achse – relativ nah an der Sonne gehalten
+    vec2 g1Pos = center + axis * 0.25;   // zwischen Center und Sonne
+    vec2 g2Pos = center + axis * 0.55;   // näher an der Sonne
     vec2 g3Pos = center - axis * 0.35;   // Gegenseite
 
     float g1 = softCircle(vUV, g1Pos, 0.040, 0.9);
@@ -88,9 +97,10 @@ void main()
         ghostCol1 * g2   * 0.7 +
         ghostCol2 * g3   * 0.7;
 
-    color *= flare;
+    // Modulate by flare strength and occlusion at the sun position
+    color *= flare * occSun;
 
     // With GL_ONE, GL_ONE blending alpha is less important, but keep it sane
-    float alpha = clamp(flare, 0.0, 1.0);
+    float alpha = clamp(flare * occSun, 0.0, 1.0);
     FragColor = vec4(color, alpha);
 }
