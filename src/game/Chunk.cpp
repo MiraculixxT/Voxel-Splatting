@@ -131,12 +131,19 @@ for (int x = 0; x < CHUNK_WIDTH; ++x) {
                         // Only plant in the "Valley" or "Foothills" (contVal < 0.6)
                         // Don't plant on super steep cliffs
                         if (contVal > -0.1f && contVal < 0.55f) {
+                            constexpr int edgeMargin = 1; // minimum distance from each chunk edge
+                            if (x <= edgeMargin || x >= CHUNK_WIDTH - 1 - edgeMargin ||
+                                z <= edgeMargin || z >= CHUNK_WIDTH - 1 - edgeMargin) {
+                                // Skip tree placement at direct edges
+                                continue;
+                                }
+
                             // Use noise for density again
                             float density = noise.moisture.GetNoise(gx * 0.5f, gz * 0.5f); // low freq density
                             if (density > 0.0f) { // 50% of the world is forest
                                 // Pseudo-random chance
                                 const auto rnd = WorldGen::ChancePercentFromCoords(gx, gz);
-                                if (rnd < 3) { // 3% chance per block
+                                if (rnd < 5) { // 5% chance per block
                                     int treeH = 5 + (rnd % 4); // 5 to 8 blocks tall
                                     treesToGen.push_back({x, y + 1, z, treeH, (int)BlockType::Wood, (int)BlockType::Leaves});
                                 }
@@ -162,9 +169,25 @@ for (int x = 0; x < CHUNK_WIDTH; ++x) {
 
 // Proper Tree Generation
 void Chunk::GenerateTree(const Tree& tree) {
+    // Helper lambda to place a block, allowing cross-chunk placement via the world
+    auto placeBlock = [&](int lx, int ly, int lz, BlockState state) {
+        if (lx >= 0 && lx < CHUNK_WIDTH &&
+            ly >= 0 && ly < CHUNK_HEIGHT &&
+            lz >= 0 && lz < CHUNK_WIDTH) {
+            // Inside this chunk
+            SetBlock(lx, ly, lz, state);
+        } else if (world) {
+            // Convert local chunk coords to world coords and delegate to the world
+            const int wx = cx * CHUNK_WIDTH + lx;
+            const int wy = ly;
+            const int wz = cz * CHUNK_WIDTH + lz;
+            world->setBlock(wx, wy, wz, state.type);
+        }
+    };
+
     // Trunk
     for (int i = 0; i < tree.height; ++i) {
-        SetBlock(tree.x, tree.y + i, tree.z, BlockState::getBasic((BlockType)tree.trunkType));
+        placeBlock(tree.x, tree.y + i, tree.z, BlockState::getBasic((BlockType)tree.trunkType));
     }
 
     // Leaves: A flattened spheroid looks more natural than a perfect sphere
@@ -189,7 +212,7 @@ void Chunk::GenerateTree(const Tree& tree) {
                     // The second image has "noisy" leaves
                     if (((lx + ly + lz) % 7) != 0) {
                         if (GetBlock(lx, ly, lz).type == BlockType::Air) {
-                            SetBlock(lx, ly, lz, BlockState::getBasic((BlockType)tree.leafType));
+                            placeBlock(lx, ly, lz, BlockState::getBasic((BlockType)tree.leafType));
                         }
                     }
                 }

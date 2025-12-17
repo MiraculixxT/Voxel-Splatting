@@ -19,6 +19,9 @@ struct TerrainNoise;
  */
 class Chunk {
 public:
+    // Pointer back to the owning world, used for cross-chunk structure placement.
+    World* world = nullptr;
+
     /**
      * @brief The chunk's X and Z coordinates in the world grid.
      * These are public and const as they define the chunk's identity.
