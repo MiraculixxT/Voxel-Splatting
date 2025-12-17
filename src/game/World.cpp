@@ -9,6 +9,7 @@ World::World(Settings& i_settings) : settings(i_settings), noise(1337) {
     for (int x = -10; x < 10; ++x) {
         for (int y = -10; y < 10; ++y) {
             Chunk &chunk = emplaceChunk(x, y);
+            chunk.world = this;
             chunk.GenerateSimpleTerrain(noise);
             chunk.BuildMesh(*this);
         }
@@ -33,6 +34,8 @@ Chunk& World::emplaceChunk(int cx, int cy) {
         cy,
         std::make_shared<Chunk>(cx, cy)
     );
+    // Ensure the new chunk knows its world
+    it->second->world = this;
     return *it->second;
 }
 
@@ -42,6 +45,7 @@ void World::setChunk(int cx, int cy, Chunk& chunk) {
 
     ChunkColumn& column = chunks[cx];
     column[cy] = std::make_shared<Chunk>(chunk);
+    column[cy]->world = this;
 }
 
 // Get pointer to chunk, or nullptr if it does not exist
@@ -106,11 +110,28 @@ bool World::setBlock(const int wx, const int wy, const int wz, const BlockType b
         return false;
     }
 
+    // Apply block change
     chunk->SetBlock(bx, by, bz, BlockState::getBasic(block));
 
-    // Update this chunk
-    chunk->BuildMesh(*this);
-    chunkRenderer->UploadMesh(chunk->cx, chunk->cz, chunk->GetMeshVertices());
+    // Determine the owning chunk coordinates from the chunk itself
+    const int cx = chunk->cx;
+    const int cz = chunk->cz;
+
+    // Always rebuild the current chunk
+    rebuildChunk(cx, cz);
+
+    if (bx == 0) {
+        rebuildChunk(cx - 1, cz); // neighbor to the -X side
+    } else if (bx == CHUNK_WIDTH - 1) {
+        rebuildChunk(cx + 1, cz); // neighbor to the +X side
+    }
+
+    if (bz == 0) {
+        rebuildChunk(cx, cz - 1); // neighbor to the -Z side
+    } else if (bz == CHUNK_WIDTH - 1) {
+        rebuildChunk(cx, cz + 1); // neighbor to the +Z side
+    }
+
     return true;
 }
 

@@ -12,6 +12,8 @@
 #include "render/gl/GLChunkRenderer.hpp"
 #include "game/Player.hpp"
 
+#include "render/core/GameOverlay.hpp"
+
 Application::Application()
     : m_Window(nullptr),
       m_Camera(glm::vec3(8.0f, 50.0f, 24.0f)),
@@ -20,8 +22,11 @@ Application::Application()
       m_LastX(SCR_WIDTH / 2.0f),
       m_LastY(SCR_HEIGHT / 2.0f),
       m_FirstMouse(true),
+      m_InCamera(false),
       m_World(m_Settings),
       m_WorldRenderer(m_Camera, m_Settings, m_World),
+      m_GameOverlay(),
+      m_Settings(),
       m_Player(nullptr) {
 }
 
@@ -89,9 +94,11 @@ void Application::Init() {
 
     // --- 7. Initialize World Renderer ---
     m_WorldRenderer.Init();
+    m_GameOverlay.Init(SCR_WIDTH, SCR_HEIGHT);
     m_Player = new Player(&m_Camera, &m_World);
     m_World.setPlayer(m_Player);
     m_World.setChunkRenderer(m_WorldRenderer.GetChunkRenderer());
+    m_GameOverlay.SetPlayer(m_Player);
 
     // --- 8. FIX: Force Initial Viewport Update ---
     // Wayland/KDE often initializes with different Window vs Framebuffer sizes.
@@ -175,12 +182,16 @@ void Application::UpdateTick() {
 }
 
 void Application::Render() {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    m_WorldRenderer.RenderWorld();
+
     // --- Start ImGui Frame ---
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    // --- Render World ---
+    // --- Render World again? (kept as in original) ---
     m_WorldRenderer.RenderWorld();
 
     // --- Draw ImGui UI ---
@@ -191,6 +202,10 @@ void Application::Render() {
     const auto& chunkRenderer = m_WorldRenderer.GetChunkRenderer();
     GUIRenderer::RenderStatsOverview(chunkRenderer->GetTotalVertexCount(), m_Camera, m_Settings);
     if (!m_InCamera) GUIRenderer::RenderSettingsScreen(m_Settings, m_Camera, chunkRenderer, m_World, m_Player);
+
+    // Render overlay (crosshair, hotbar, etc.) after setting up ImGui
+    m_GameOverlay.Render();
+
     ImGui::Render();
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -199,7 +214,7 @@ void Application::Render() {
 // --- Static Callback Wrappers ---
 
 void Application::FramebufferSizeCallback(GLFWwindow* window, const int width, const int height) {
-    if (const auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
+    if (auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window))) {
         app->OnFramebufferSize(width, height);
     }
 }
@@ -214,6 +229,7 @@ void Application::MouseCallback(GLFWwindow* window, const double xpos, const dou
 
 void Application::OnFramebufferSize(const int width, const int height) {
     glViewport(0, 0, width, height);
+    m_GameOverlay.OnFramebufferSize(width, height);
 }
 
 void Application::OnMouseMove(const double xpos, const double ypos) {

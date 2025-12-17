@@ -11,6 +11,7 @@
 #include "game/Player.hpp"
 
 #include "render/gl/GLWorldRenderer.hpp"
+#include "render/core/GameOverlay.hpp"
 
 // Constants
 const unsigned int SCR_WIDTH = 1280;
@@ -31,7 +32,7 @@ private:
     void Render();
 
     // Callbacks
-    static void OnFramebufferSize(int width, int height);
+    void OnFramebufferSize(int width, int height);
     void OnMouseMove(double xpos, double ypos);
 
     // Static callback wrappers
@@ -60,6 +61,7 @@ private:
 
     // Rendering
     GLWorldRenderer m_WorldRenderer;
+    GameOverlay m_GameOverlay;
 
     // Settings
     Settings m_Settings;

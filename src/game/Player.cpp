@@ -12,6 +12,13 @@ Player::Player(Camera* camera, World* world)
         : Position(8.0f, 60.0f, 24.0f), m_Camera(camera), m_World(world)
 {
     m_Camera->Position = Position + glm::vec3(0,1.7f,0);
+
+    // Initialize hotbar inventory as empty
+    for (int i = 0; i < HOTBAR_SIZE; ++i) {
+        m_Hotbar[i].type = BlockType::Air;
+        m_Hotbar[i].count = 0;
+    }
+    m_SelectedHotbarIndex = 0;
 }
 
 void Player::Update(const float dt) {
@@ -22,8 +29,68 @@ void Player::Update(const float dt) {
 }
 
 void Player::ProcessInput(GLFWwindow* window, const float dt) {
+    HandleHotbarSelectionInput(window);
     ApplyMovement(window, dt);
     ApplyBlockInteraction(window, dt);
+}
+
+void Player::HandleHotbarSelectionInput(GLFWwindow* window) {
+    if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS) m_SelectedHotbarIndex = 0;
+    else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS) m_SelectedHotbarIndex = 1;
+    else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS) m_SelectedHotbarIndex = 2;
+    else if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS) m_SelectedHotbarIndex = 3;
+    else if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS) m_SelectedHotbarIndex = 4;
+    else if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS) m_SelectedHotbarIndex = 5;
+    else if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS) m_SelectedHotbarIndex = 6;
+    else if (glfwGetKey(window, GLFW_KEY_8) == GLFW_PRESS) m_SelectedHotbarIndex = 7;
+    else if (glfwGetKey(window, GLFW_KEY_9) == GLFW_PRESS) m_SelectedHotbarIndex = 8;
+}
+
+bool Player::AddBlockToInventory(BlockType type) {
+    if (type == BlockType::Air)
+        return false;
+
+    // First: try to stack onto existing stacks of the same type
+    for (int i = 0; i < HOTBAR_SIZE; ++i) {
+        InventorySlot& slot = m_Hotbar[i];
+        if (!slot.empty() && slot.type == type && slot.count < 64) {
+            ++slot.count;
+            return true;
+        }
+    }
+
+    // Second: put into an empty slot
+    for (int i = 0; i < HOTBAR_SIZE; ++i) {
+        InventorySlot& slot = m_Hotbar[i];
+        if (slot.empty()) {
+            slot.type = type;
+            slot.count = 1;
+            return true;
+        }
+    }
+
+    // Inventory full
+    return false;
+}
+
+BlockType Player::GetSelectedBlockType() const {
+    const InventorySlot& slot = m_Hotbar[m_SelectedHotbarIndex];
+    if (slot.empty())
+        return BlockType::Air;
+    return slot.type;
+}
+
+bool Player::RemoveBlockFromSelectedSlot() {
+    InventorySlot& slot = m_Hotbar[m_SelectedHotbarIndex];
+    if (slot.empty())
+        return false;
+
+    --slot.count;
+    if (slot.count <= 0) {
+        slot.count = 0;
+        slot.type = BlockType::Air;
+    }
+    return true;
 }
 
 void Player::ApplyBlockInteraction(GLFWwindow *window, float dt) {
@@ -33,17 +100,26 @@ void Player::ApplyBlockInteraction(GLFWwindow *window, float dt) {
     if (cooldownBreak <= 0.0f && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
         // Break block
         if (const RaycastResult result = Raycast(5.0f); result.hit) {
-            result.print();
-            cooldownBreak = 0.5f; // 500ms cooldown
+            BlockState currentBlock = m_World->getBlock(result.blockPos.x, result.blockPos.y, result.blockPos.z);
+
+            if (currentBlock.type != BlockType::Air) {
+                AddBlockToInventory(currentBlock.type);
+            }
+
+            cooldownBreak = 0.2f; // 200ms cooldown
             m_World->setBlock(result.blockPos.x, result.blockPos.y, result.blockPos.z, BlockType::Air);
         }
     }
     else if (cooldownPlace <= 0.0f && glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-        // Place block
-        if (const RaycastResult result = Raycast(5.0f); result.hit) {
-            result.print();
-            cooldownPlace = 0.2f; // 200ms cooldown
-            m_World->setBlock(result.prevBlockPos.x, result.prevBlockPos.y, result.prevBlockPos.z, BlockType::Stone);
+        // Place block from selected hotbar slot
+        BlockType placeType = GetSelectedBlockType();
+        if (placeType != BlockType::Air) {
+            if (const RaycastResult result = Raycast(5.0f); result.hit) {
+                if (m_World->setBlock(result.prevBlockPos.x, result.prevBlockPos.y, result.prevBlockPos.z, placeType)) {
+                    RemoveBlockFromSelectedSlot();
+                    cooldownPlace = 0.2f; // 200ms cooldown
+                }
+            }
         }
     }
 }
@@ -227,4 +303,3 @@ RaycastResult Player::Raycast(float maxDistance) const {
 
     return result;
 }
-

@@ -19,6 +19,13 @@ struct RaycastResult {
     }
 };
 
+struct InventorySlot {
+    BlockType type = BlockType::Air;
+    int count = 0;
+
+    bool empty() const { return count <= 0 || type == BlockType::Air; }
+};
+
 class Camera;
 class World;
 
@@ -40,6 +47,12 @@ public:
     bool IsCollidingAt(const glm::vec3& pos) const;
     bool IsBlockSolid(int x, int y, int z) const;
 
+    // Inventory query helpers (useful for UI)
+    static constexpr int HOTBAR_SIZE = 9;
+    const InventorySlot& GetSlot(int index) const { return m_Hotbar[index]; }
+    int GetSelectedHotbarIndex() const { return m_SelectedHotbarIndex; }
+    BlockType GetSelectedBlockType() const;
+
 private:
     Camera* m_Camera;
     World* m_World;
@@ -49,6 +62,13 @@ private:
 
     RaycastResult Raycast(float maxDistance) const;
 
+    void HandleHotbarSelectionInput(GLFWwindow* window);
+    bool AddBlockToInventory(BlockType type);
+    bool RemoveBlockFromSelectedSlot();
+
     float cooldownBreak = 0.0f;
     float cooldownPlace = 0.0f;
+
+    InventorySlot m_Hotbar[HOTBAR_SIZE] = {};
+    int m_SelectedHotbarIndex = 0; // 0..8 mapped to keys 1..9
 };

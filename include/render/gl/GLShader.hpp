@@ -9,8 +9,12 @@ class GLShader {
 public:
     unsigned int ID;
 
+    GLShader();
     GLShader(const char* vertexPath, const char* fragmentPath);
     ~GLShader();
+
+    // New: deferred initialization
+    void Init(const char* vertexPath, const char* fragmentPath);
 
     void use();
     void setBool(const std::string& name, bool value) const;
