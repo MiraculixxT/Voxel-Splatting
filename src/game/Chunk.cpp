@@ -404,8 +404,31 @@ void Chunk::BuildSplats(World& world) {
                 BlockType currentType   = currentBlock.type;
                 if (currentType == BlockType::Air) continue;
 
+                // PERF: Water should only render its surface (avoid thousands of underwater splats)
+                if (currentType == BlockType::Water) {
+                    // Only emit the top face if the block above is NOT water (i.e. this is the surface)
+                    BlockState above = GetBlock(x, y + 1, z);
+                    if (BlockDatabase::IsTransparent(above) && above.type != BlockType::Water) {
+                        // We still need center, so compute it here and emit directly
+                        glm::vec3 waterCenter(
+                                static_cast<float>(x) + worldOffsetX + 0.5f,
+                                static_cast<float>(y) + 0.5f,
+                                static_cast<float>(z) + worldOffsetZ + 0.5f
+                        );
+
+                        // Local lambda copies the needed parts from emitFaceSplats but uses the existing one below
+                        // by temporarily assigning center.
+                        center = waterCenter;
+                        // Emit only the top surface
+                        // (emitFaceSplats is declared below; we jump to it by not continuing here)
+                    } else {
+                        continue; // underwater water block -> no splats at all
+                    }
+                }
+
                 // Block center in world space
-                glm::vec3 center(
+                glm::vec3 center;
+                center = glm::vec3(
                         static_cast<float>(x) + worldOffsetX + 0.5f,
                         static_cast<float>(y) + 0.5f,
                         static_cast<float>(z) + worldOffsetZ + 0.5f
@@ -502,8 +525,22 @@ void Chunk::BuildSplats(World& world) {
                 };
 
                 // y+ (top)
-                if (neighborIsTransparent(GetBlock(x, y + 1, z))) {
-                    emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                {
+                    BlockState up = GetBlock(x, y + 1, z);
+                    // For water: only surface (block above must not be water)
+                    if (currentType == BlockType::Water) {
+                        if (BlockDatabase::IsTransparent(up) && up.type != BlockType::Water) {
+                            emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                        }
+                    } else {
+                        if (neighborIsTransparent(up)) {
+                            emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                        }
+                    }
+                }
+                // Water: surface-only, skip bottom/sides entirely
+                if (currentType == BlockType::Water) {
+                    continue;
                 }
                 // y- (bottom)
                 if (neighborIsTransparent(GetBlock(x, y - 1, z))) {

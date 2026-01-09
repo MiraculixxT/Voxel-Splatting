@@ -110,4 +110,6 @@ private:
 
     // Gaussian splat data for this chunk
     std::vector<Splat> m_Splats;
+
+    glm::vec3 center;
 };
