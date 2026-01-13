@@ -12,6 +12,8 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <map>
+#include <utility>
 
 #include "game/Chunk.hpp"
 
@@ -147,6 +149,55 @@ namespace {
     // Global toggle used by the F7 hotkey
     static bool g_useTrainedSplats = false;
 
+    // Cache trained splats loaded from a folder (so we don't re-read every toggle)
+    template <typename TSplat>
+    struct TrainedCache {
+        bool loaded = false;
+        std::string folderAbs;
+        std::map<std::pair<int,int>, std::vector<TSplat>> byChunk;
+    };
+
+    template <typename TSplat>
+    static TrainedCache<TSplat>& GetTrainedCache() {
+        static TrainedCache<TSplat> cache;
+        return cache;
+    }
+
+    template <typename TSplat>
+    static void LoadTrainedFolderOnce(const std::string& trainedFolder) {
+        auto& cache = GetTrainedCache<TSplat>();
+
+        const std::string abs = std::filesystem::absolute(trainedFolder).string();
+        if (cache.loaded && cache.folderAbs == abs) return;
+
+        cache.loaded = true;
+        cache.folderAbs = abs;
+        cache.byChunk.clear();
+
+        if (!std::filesystem::exists(cache.folderAbs)) {
+            std::cout << "Trained folder does not exist: '" << cache.folderAbs << "'" << std::endl;
+            return;
+        }
+
+        size_t files = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(cache.folderAbs)) {
+            if (!entry.is_regular_file()) continue;
+            const auto p = entry.path();
+            if (p.extension() != ".bin") continue;
+            // Accept any name; we read cx/cy from the header
+            int cx = 0, cy = 0;
+            std::vector<TSplat> spl;
+            if (ReadSPL2v2ChunkFile<TSplat>(p.string(), cx, cy, spl)) {
+                cache.byChunk[{cx, cy}] = std::move(spl);
+                files++;
+            }
+        }
+
+        std::cout << "Loaded trained cache: filesRead=" << files
+                  << " chunksCached=" << cache.byChunk.size()
+                  << " folder='" << cache.folderAbs << "'" << std::endl;
+    }
+
     template <typename TSplat>
     static bool ReadSPL2v2ChunkFile(const std::string& path, int& outCx, int& outCy, std::vector<TSplat>& outSplats) {
         std::ifstream in(path, std::ios::binary);
@@ -210,6 +261,10 @@ namespace {
                                                 const decltype(std::declval<World>().getChunks())& chunks) {
         if (!splatRenderer) return;
 
+        // Ensure cache is loaded (reads cx/cy from headers, independent of filenames)
+        LoadTrainedFolderOnce<TSplat>(trainedFolder);
+        auto& cache = GetTrainedCache<TSplat>();
+
         size_t trainedUsed = 0;
         size_t totalChunks = 0;
 
@@ -223,25 +278,19 @@ namespace {
                     continue;
                 }
 
-                // Try to load trained file for this chunk
-                std::ostringstream oss;
-                oss << trainedFolder << "/chunk_" << cx << "_" << cy << ".splats.bin";
-                const std::string path = oss.str();
-
-                std::vector<TSplat> trained;
-                int fileCx = 0, fileCy = 0;
-                if (std::filesystem::exists(path) && ReadSPL2v2ChunkFile<TSplat>(path, fileCx, fileCy, trained)) {
-                    splatRenderer->UploadSplats(cx, cy, trained);
+                // Override ON: use trained if we have it, else fallback
+                auto it = cache.byChunk.find({cx, cy});
+                if (it != cache.byChunk.end()) {
+                    splatRenderer->UploadSplats(cx, cy, it->second);
                     trainedUsed++;
                 } else {
-                    // Fallback: original splats
                     splatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
                 }
             }
         }
 
         std::cout << "Splat override applied. trainedUsed=" << trainedUsed << " / " << totalChunks
-                  << " folder='" << trainedFolder << "'" << std::endl;
+                  << " folder='" << cache.folderAbs << "'" << std::endl;
     }
 
 
