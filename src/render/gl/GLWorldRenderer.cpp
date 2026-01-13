@@ -315,22 +315,26 @@ void GLWorldRenderer::Init() {
     glGenVertexArrays(1, &m_SkyVAO);
 
     // Ground-truth capture target (reference images)
+    // NOTE: keep GT capture optional; it is not needed for runtime rendering.
     g_gt.init(SCR_WIDTH, SCR_HEIGHT);
 
     // --- 8. Create World/Chunk ---
     m_ChunkRenderer = new GLChunkRenderer(m_Camera, m_Settings);
     m_SplatRenderer = new GLSplatRenderer();
 
-    // Register renderers in world so the mesh worker can upload to them
-
-    // Build and upload initial meshes and splats for already generated chunks
+    // Build and upload initial meshes for already generated chunks
     for (auto [cx, column] : m_World.getChunks()) {
         for (auto& [cy, chunk] : column) {
             chunk->BuildMesh(m_World);
-            chunk->BuildSplats(m_World);
             m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
-            m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
         }
+    }
+
+    // Load trained splats from disk (produced by the training pipeline)
+    // Expected files: captures/splats/chunk_<cx>_<cz>.splats.bin
+    if (m_SplatRenderer) {
+        const bool ok = m_SplatRenderer->LoadTrainedChunkFolder("captures/splats");
+        std::cout << (ok ? "[Splats] Trained chunk folder loaded.\n" : "[Splats] No trained splats loaded from captures/splats (folder missing/empty?).\n");
     }
 }
 

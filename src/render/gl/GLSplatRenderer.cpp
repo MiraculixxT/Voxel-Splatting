@@ -5,6 +5,10 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
+#include <cstdint>
+#include <vector>
+#include <algorithm>
 
 struct GPUInstance {
     glm::vec3 position;
@@ -29,25 +33,86 @@ static std::string loadShaderSource(const std::string& path) {
 
 GLSplatRenderer::GLSplatRenderer() {
     shaderProgram = createShaderProgram();
-
     initQuad();
 }
 
 GLSplatRenderer::~GLSplatRenderer() {
-    for (auto& entry : buffers) {
-        ChunkSplatBuffer& buf = entry.second;
-        if (buf.vbo) {
-            glDeleteBuffers(1, &buf.vbo);
-        }
-        if (buf.vao) {
-            glDeleteVertexArrays(1, &buf.vao);
-        }
-    }
-    buffers.clear();
+    ClearAll();
 
     if (shaderProgram) {
         glDeleteProgram(shaderProgram);
         shaderProgram = 0;
+    }
+}
+
+void GLSplatRenderer::ClearAll() {
+    for (auto& entry : buffers) {
+        ChunkSplatBuffer& buf = entry.second;
+        if (buf.vbo) {
+            glDeleteBuffers(1, &buf.vbo);
+            buf.vbo = 0;
+        }
+        if (buf.vao) {
+            glDeleteVertexArrays(1, &buf.vao);
+            buf.vao = 0;
+        }
+        buf.count = 0;
+        buf.trained = false;
+    }
+    buffers.clear();
+
+    // Note: m_QuadVbo is shared across all chunk VAOs; keep it alive for reuse.
+}
+
+bool GLSplatRenderer::readHeader(std::ifstream& in, SplatBinHeader& h) {
+    // Read the first field; if this fails, we treat it as EOF.
+    if (!in.read(reinterpret_cast<char*>(&h.magic), sizeof(h.magic))) {
+        return false;
+    }
+    if (!in.read(reinterpret_cast<char*>(&h.version), sizeof(h.version))) return false;
+    if (!in.read(reinterpret_cast<char*>(&h.cx), sizeof(h.cx))) return false;
+    if (!in.read(reinterpret_cast<char*>(&h.cz), sizeof(h.cz))) return false;
+    if (!in.read(reinterpret_cast<char*>(&h.count), sizeof(h.count))) return false;
+    if (!in.read(reinterpret_cast<char*>(&h.stride), sizeof(h.stride))) return false;
+    return true;
+}
+
+void GLSplatRenderer::decodeToSplats(const SplatBinHeader& h,
+                                     const std::vector<uint8_t>& raw,
+                                     std::vector<Splat>& out) {
+    out.clear();
+    if (h.count == 0) return;
+
+    // We support stride >= 40 bytes. We only use the first 10 floats:
+    // pos3, scale3, color3, opacity1.
+    if (h.stride < 10 * sizeof(float)) {
+        return;
+    }
+
+    const size_t expectedBytes = static_cast<size_t>(h.count) * static_cast<size_t>(h.stride);
+    if (raw.size() < expectedBytes) {
+        return;
+    }
+
+    out.reserve(h.count);
+
+    for (uint32_t i = 0; i < h.count; ++i) {
+        const uint8_t* base = raw.data() + static_cast<size_t>(i) * static_cast<size_t>(h.stride);
+        const float* f = reinterpret_cast<const float*>(base);
+
+        Splat s;
+        s.position = glm::vec3(f[0], f[1], f[2]);
+        s.scale    = glm::vec3(f[3], f[4], f[5]);
+        s.color    = glm::vec3(f[6], f[7], f[8]);
+        s.opacity  = f[9];
+
+        // Trained dumps do not provide these in our simple portable format.
+        // Provide sensible defaults so the existing shader path works.
+        s.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        s.uv     = glm::vec2(0.0f);
+        s.layer  = 0.0f;
+
+        out.push_back(s);
     }
 }
 
@@ -187,6 +252,85 @@ void GLSplatRenderer::RemoveSplats(int cx, int cz) {
     buffers.erase(it);
 }
 
+bool GLSplatRenderer::LoadTrainedChunkFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        std::cerr << "[Splats] Failed to open: " << path << std::endl;
+        return false;
+    }
+
+    SplatBinHeader h;
+    if (!readHeader(in, h)) {
+        std::cerr << "[Splats] Failed to read header: " << path << std::endl;
+        return false;
+    }
+
+    constexpr uint32_t MAGIC_SPL2 = 0x53504C32; // 'SPL2'
+    if (h.magic != MAGIC_SPL2) {
+        std::cerr << "[Splats] Bad magic in " << path << std::endl;
+        return false;
+    }
+    if (h.version != 2) {
+        std::cerr << "[Splats] Unsupported version " << h.version << " in " << path << std::endl;
+        return false;
+    }
+
+    const size_t bytes = static_cast<size_t>(h.count) * static_cast<size_t>(h.stride);
+    std::vector<uint8_t> raw;
+    raw.resize(bytes);
+    if (bytes > 0) {
+        if (!in.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(bytes))) {
+            std::cerr << "[Splats] Failed to read payload in " << path << std::endl;
+            return false;
+        }
+    }
+
+    std::vector<Splat> decoded;
+    decodeToSplats(h, raw, decoded);
+
+    // Upload using the existing VAO/VBO instancing path.
+    UploadSplats(h.cx, h.cz, decoded);
+    buffers[std::make_pair(h.cx, h.cz)].trained = true;
+
+    std::cout << "[Splats] Loaded trained chunk (" << h.cx << "," << h.cz << ") count=" << decoded.size()
+              << " stride=" << h.stride << " from " << path << std::endl;
+
+    return true;
+}
+
+bool GLSplatRenderer::LoadTrainedChunkFolder(const std::string& folder) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(folder)) {
+        std::cerr << "[Splats] Folder does not exist: " << folder << std::endl;
+        return false;
+    }
+
+    std::vector<fs::path> files;
+    for (const auto& it : fs::directory_iterator(folder)) {
+        if (!it.is_regular_file()) continue;
+        const auto& p = it.path();
+        const std::string name = p.filename().string();
+        // Only accept our naming convention; header is still authoritative.
+        if (name.rfind("chunk_", 0) == 0 && name.find(".splats.bin") != std::string::npos) {
+            files.push_back(p);
+        }
+    }
+
+    std::sort(files.begin(), files.end());
+
+    size_t loaded = 0;
+    for (const auto& p : files) {
+        if (LoadTrainedChunkFile(p.string())) {
+            loaded++;
+        }
+    }
+
+    std::cout << "[Splats] Loaded trained chunks from folder: " << folder
+              << " (" << loaded << "/" << files.size() << ")" << std::endl;
+
+    return loaded > 0;
+}
+
 void GLSplatRenderer::SetLighting(const glm::mat4& lightViewProj, GLuint shadowTexture, const glm::vec3& lightDir)
 {
     m_LightViewProj = lightViewProj;
@@ -233,6 +377,7 @@ void GLSplatRenderer::Draw(const glm::mat4& viewProj,
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
 
     for (const auto& entry : buffers) {
         const std::pair<int,int>& key = entry.first;
@@ -256,6 +401,7 @@ void GLSplatRenderer::Draw(const glm::mat4& viewProj,
         glDrawArraysInstanced(GL_TRIANGLES, 0, 6, buf.count);
     }
 
+    glDepthMask(GL_TRUE);
     glBindVertexArray(0);
     glUseProgram(0);
 }
