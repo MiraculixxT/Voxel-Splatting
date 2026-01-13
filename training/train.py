@@ -1,5 +1,4 @@
-
-
+# training/train.py
 import os
 import glob
 import struct
@@ -8,55 +7,49 @@ from typing import Tuple, List
 
 import numpy as np
 from PIL import Image
+
 import torch
 import torch.nn.functional as F
 
-# ---- Device selection ----
-USE_CUDA = False  # set True on a CUDA machine
-if USE_CUDA and torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
-else:
-    DEVICE = torch.device("cpu")
+# -----------------------------
+# Device selection
+# -----------------------------
+USE_CUDA = True
+DEVICE = torch.device("cuda") if (USE_CUDA and torch.cuda.is_available()) else torch.device("cpu")
 print("Using device:", DEVICE)
 
 
+# -----------------------------
+# Data structures
+# -----------------------------
 @dataclass
 class GTFrame:
     idx: int
-    rgb: torch.Tensor   # (3,H,W) float32
-    depth: torch.Tensor # (H,W) float32 (linear)
-    view: torch.Tensor  # (4,4) float32
-    proj: torch.Tensor  # (4,4) float32
+    rgb: torch.Tensor   # (3,H,W) float32 in [0,1]
+    depth: torch.Tensor # (H,W) float32
+    view: torch.Tensor  # (4,4) float32 row-major for row-vectors
+    proj: torch.Tensor  # (4,4) float32 row-major for row-vectors
 
 
-@dataclass
-class ChunkSplats:
-    cx: int
-    cy: int
-    splats10: torch.Tensor  # (N,10) float32 [pos3, scale3, color3, opacity]
-
-
+# -----------------------------
+# IO helpers
+# -----------------------------
 def load_png(path: str) -> torch.Tensor:
     img = Image.open(path).convert("RGBA")
-    arr = np.asarray(img, dtype=np.uint8)[..., :3]  # (H,W,3)
-    t = torch.from_numpy(arr).float().permute(2, 0, 1) / 255.0
+    arr = np.asarray(img, dtype=np.uint8)[..., :3].copy()
+    t = torch.from_numpy(arr).float().permute(2, 0, 1).contiguous() / 255.0
     return t.to(DEVICE)
 
 
 def load_depth_bin(path: str, w: int, h: int) -> torch.Tensor:
     depth = np.fromfile(path, dtype=np.float32)
     if depth.size != w * h:
-        raise ValueError(f"Depth size mismatch: {depth.size} vs {w*h} for {path}")
-    depth = depth.reshape((h, w))
+        raise ValueError(f"Depth size mismatch: got {depth.size}, expected {w*h} ({w}x{h}) for {path}")
+    depth = depth.reshape((h, w)).copy()
     return torch.from_numpy(depth).to(DEVICE)
 
 
 def parse_meta(path: str) -> Tuple[int, int, np.ndarray, np.ndarray]:
-    # format written by the engine:
-    # w <int>\n
-    # h <int>\n
-    # view <16 floats>\n
-    # proj <16 floats>\n
     with open(path, "r") as f:
         lines = [ln.strip() for ln in f.readlines() if ln.strip()]
 
@@ -74,9 +67,10 @@ def parse_meta(path: str) -> Tuple[int, int, np.ndarray, np.ndarray]:
     if len(view_vals) != 16 or len(proj_vals) != 16:
         raise ValueError(f"Bad matrix size in {path}")
 
-    # Note: the engine wrote view[c][r] (column-major). We keep the same ordering.
-    view = np.array(view_vals, dtype=np.float32).reshape((4, 4))
-    proj = np.array(proj_vals, dtype=np.float32).reshape((4, 4))
+    # GLM dump is column-major; convert to row-major for:
+    # clip = p4 @ view @ proj
+    view = np.array(view_vals, dtype=np.float32).reshape((4, 4)).T
+    proj = np.array(proj_vals, dtype=np.float32).reshape((4, 4)).T
     return w, h, view, proj
 
 
@@ -103,9 +97,6 @@ def load_first_gt_frame(gt_dir: str) -> GTFrame:
 
 
 def read_spl2_chunk(path: str) -> Tuple[int, int, torch.Tensor]:
-    # Header:
-    # magic(u32), version(u32), cx(i32), cy(i32), count(u32), stride(u32)
-    # Payload (v2): count * 10 float32 (stride=40)
     with open(path, "rb") as f:
         header = f.read(24)
         if len(header) != 24:
@@ -120,17 +111,36 @@ def read_spl2_chunk(path: str) -> Tuple[int, int, torch.Tensor]:
     if len(payload) != count * stride:
         raise ValueError(f"Payload mismatch: {len(payload)} vs {count*stride} in {path}")
 
-    arr = np.frombuffer(payload, dtype=np.float32)
-    splats10 = torch.from_numpy(arr.reshape((count, 10))).to(DEVICE)
-    return cx, cy, splats10
+    arr = np.frombuffer(payload, dtype=np.float32).copy()
+    spl10 = torch.from_numpy(arr.reshape((count, 10))).to(DEVICE)
+    return cx, cy, spl10
 
 
-# --- Write SPL2/v2 chunk helper ---
+def load_training_splats(splats_dir: str, max_chunks: int = 32) -> torch.Tensor:
+    files = sorted(glob.glob(os.path.join(splats_dir, "chunk_*_*.splats.bin")))
+    if not files:
+        raise FileNotFoundError(f"No chunk_*.splats.bin found in {splats_dir}")
+
+    picked = 0
+    all_spl = []
+    for fp in files:
+        cx, cy, spl10 = read_spl2_chunk(fp)
+        if spl10.shape[0] == 0:
+            continue
+        all_spl.append(spl10)
+        picked += 1
+        if picked >= max_chunks:
+            break
+
+    if not all_spl:
+        raise RuntimeError("No non-empty chunks found.")
+
+    out = torch.cat(all_spl, dim=0).contiguous()
+    print(f"Loaded {picked} chunks -> total splats: {out.shape[0]}")
+    return out
+
+
 def write_spl2_chunk(path: str, cx: int, cy: int, splats10: torch.Tensor):
-    """Write SPL2/v2 chunk file.
-
-    splats10: (N,10) float32 [pos3, scale3, color3, opacity]
-    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
     spl_cpu = splats10.detach().to("cpu").contiguous()
@@ -138,15 +148,13 @@ def write_spl2_chunk(path: str, cx: int, cy: int, splats10: torch.Tensor):
         spl_cpu = spl_cpu.float()
 
     count = int(spl_cpu.shape[0])
-    stride = 40  # 10 * float32
-
-    # Header matches C++: magic(u32), version(u32), cx(i32), cy(i32), count(u32), stride(u32)
-    magic = 0x53504C32  # 'SPL2'
+    stride = 40
+    magic = 0x53504C32
     version = 2
 
     header = struct.pack("<IIiiII", magic, version, int(cx), int(cy), count, stride)
-
     payload = spl_cpu.numpy().astype(np.float32, copy=False).tobytes(order="C")
+
     expected = count * stride
     if len(payload) != expected:
         raise ValueError(f"Bad payload bytes: {len(payload)} vs {expected}")
@@ -156,201 +164,300 @@ def write_spl2_chunk(path: str, cx: int, cy: int, splats10: torch.Tensor):
         f.write(payload)
 
 
-def load_one_nonempty_chunk(splats_dir: str) -> ChunkSplats:
-    files = sorted(glob.glob(os.path.join(splats_dir, "chunk_*_*.splats.bin")))
-    if not files:
-        raise FileNotFoundError(f"No chunk_*.splats.bin found in {splats_dir}")
-
-    for fp in files:
-        cx, cy, spl10 = read_spl2_chunk(fp)
-        if spl10.shape[0] > 0:
-            return ChunkSplats(cx=cx, cy=cy, splats10=spl10)
-
-    raise RuntimeError("All chunk splat files were empty")
-
-
 def save_tensor_image(path: str, img_3hw: torch.Tensor):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     img = img_3hw.detach().clamp(0, 1).permute(1, 2, 0).cpu().numpy()
     Image.fromarray((img * 255.0).astype(np.uint8)).save(path)
 
 
+# -----------------------------
+# Projection
+# -----------------------------
 def project(pos_world: torch.Tensor, view: torch.Tensor, proj: torch.Tensor):
-    # pos_world: (N,3)
+    """
+    Row-vector convention:
+      clip = p4 @ view @ proj
+    view/proj are row-major.
+    """
     N = pos_world.shape[0]
     ones = torch.ones((N, 1), device=pos_world.device, dtype=pos_world.dtype)
     p4 = torch.cat([pos_world, ones], dim=1)  # (N,4)
+    clip = (p4 @ view) @ proj                 # (N,4)
 
-    # The meta matrices are in column-major ordering (GLM). Using transpose here matches the earlier sanity loader.
-    clip = (p4 @ view.T) @ proj.T  # (N,4)
-    w = clip[:, 3:4].clamp_min(1e-8)
-    ndc = clip[:, :3] / w
-    return ndc, w.squeeze(1)
+    w = clip[:, 3:4]
+    w_safe = torch.where(w.abs() < 1e-8, torch.full_like(w, 1e-8), w)
+    ndc = clip[:, :3] / w_safe
+    return ndc
 
 
-def render_gaussian_splats(
-    pos: torch.Tensor,
-    scale: torch.Tensor,
-    color: torch.Tensor,
-    opacity: torch.Tensor,
-    view: torch.Tensor,
-    proj: torch.Tensor,
-    H: int,
-    W: int,
-    max_splats: int = 5000,
+# -----------------------------
+# Manual-grad renderer/trainer
+# -----------------------------
+@torch.no_grad()
+def render_and_accumulate(
+        pos: torch.Tensor,
+        color: torch.Tensor,    # (N,3) in [0,1]
+        opacity: torch.Tensor,  # (N,1) in [0,1]
+        view: torch.Tensor,
+        proj: torch.Tensor,
+        H: int,
+        W: int,
+        max_splats: int,
+        R: int,
 ):
-    """Differentiable (but slow) debug renderer.
-
-    - Projects splat centers.
-    - Uses a simple screen-space radius derived from average world scale and depth.
-    - Alpha-composites front-to-back.
-
-    This is for verification + first tiny training runs.
     """
-
-    # Subsample for speed
+    Forward pass WITHOUT autograd.
+    Returns:
+      pred (3,H,W),
+      acc_rgb (3,H,W)  (numerator),
+      acc_a  (1,H,W)   (denominator),
+      used indices and their per-splat projected x,y (for backward pass)
+    """
     N = pos.shape[0]
     if N > max_splats:
         idx = torch.randperm(N, device=pos.device)[:max_splats]
         pos = pos[idx]
-        scale = scale[idx]
         color = color[idx]
         opacity = opacity[idx]
+    else:
+        idx = None  # means all
 
-    ndc, wclip = project(pos, view, proj)
+    ndc = project(pos, view, proj)
 
-    # Keep in front + roughly in view
-    mask = (wclip > 0) & (ndc[:, 2] > -1) & (ndc[:, 2] < 1) & (ndc[:, 0].abs() < 1.2) & (ndc[:, 1].abs() < 1.2)
+    mask = torch.isfinite(ndc).all(dim=1)
+    mask = mask & (ndc[:, 0].abs() < 2.0) & (ndc[:, 1].abs() < 2.0) & (ndc[:, 2] > -2.0) & (ndc[:, 2] < 2.0)
+
+    kept = int(mask.sum().item())
+    print("mask kept:", kept, "/", int(mask.numel()))
+    if kept == 0:
+        z = torch.zeros((3, H, W), device=pos.device, dtype=torch.float32)
+        a = torch.zeros((1, H, W), device=pos.device, dtype=torch.float32)
+        return z, z.clone(), a, None
+
     ndc = ndc[mask]
-    color = color[mask]
-    opacity = opacity[mask]
-    scale = scale[mask]
+    color = color[mask].clamp(0, 1)
+    opacity = opacity[mask].clamp(0, 1).squeeze(1)  # (K,)
 
-    # Screen coords
     x = (ndc[:, 0] * 0.5 + 0.5) * (W - 1)
     y = (1.0 - (ndc[:, 1] * 0.5 + 0.5)) * (H - 1)
-    z = ndc[:, 2]
 
-    # Sort front-to-back
-    order = torch.argsort(z)
-    x = x[order]
-    y = y[order]
-    z = z[order]
-    color = color[order]
-    opacity = opacity[order]
-    scale = scale[order]
+    K = int(x.shape[0])
+    print("to splat:", K)
 
-    # Very rough screen radius (debug): depends on scale and depth
-    # Bigger world scale -> bigger splat. Farther -> smaller.
-    avg_scale = scale.mean(dim=1).clamp_min(0.01)
-    # Map ndc z [-1..1] to something positive-ish for sizing
-    depth_factor = (1.5 - (z * 0.5 + 0.5)).clamp(0.25, 2.0)
-    r = (avg_scale * 30.0 * depth_factor).clamp(1.0, 20.0)
+    sigma2 = float(R * R)
 
-    img = torch.zeros((3, H, W), device=pos.device, dtype=torch.float32)
-    a_acc = torch.zeros((1, H, W), device=pos.device, dtype=torch.float32)
+    acc_rgb = torch.zeros((3, H, W), device=pos.device, dtype=torch.float32)
+    acc_a = torch.zeros((1, H, W), device=pos.device, dtype=torch.float32)
 
-    # Splat each point into a local patch
-    for i in range(x.shape[0]):
-        xi = x[i]
-        yi = y[i]
-        ri = int(torch.round(r[i]).item())
-        if ri <= 0:
+    for i in range(K):
+        xi = x[i].item()
+        yi = y[i].item()
+
+        cx = int(round(xi))
+        cy = int(round(yi))
+
+        x0 = max(0, cx - R)
+        x1 = min(W - 1, cx + R)
+        y0 = max(0, cy - R)
+        y1 = min(H - 1, cy + R)
+        if x1 < x0 or y1 < y0:
             continue
-
-        x0 = max(0, int(torch.floor(xi).item()) - ri)
-        x1 = min(W - 1, int(torch.floor(xi).item()) + ri)
-        y0 = max(0, int(torch.floor(yi).item()) - ri)
-        y1 = min(H - 1, int(torch.floor(yi).item()) + ri)
 
         xs = torch.arange(x0, x1 + 1, device=pos.device, dtype=torch.float32)
         ys = torch.arange(y0, y1 + 1, device=pos.device, dtype=torch.float32)
         yy, xx = torch.meshgrid(ys, xs, indexing="ij")
 
-        dx = xx - xi
-        dy = yy - yi
+        dx = xx - float(xi)
+        dy = yy - float(yi)
+        wgt = torch.exp(-(dx * dx + dy * dy) / (2.0 * sigma2 + 1e-6))  # (h,w)
 
-        sigma2 = (ri * 0.5) ** 2
-        wgt = torch.exp(-(dx * dx + dy * dy) / (2.0 * sigma2 + 1e-6))
+        a = (opacity[i].item() * wgt).clamp(0, 1)  # (h,w)
 
-        a = (opacity[i].clamp(0, 1) * wgt).clamp(0, 1)
+        acc_rgb[:, y0:y1 + 1, x0:x1 + 1] += a.unsqueeze(0) * color[i].view(3, 1, 1)
+        acc_a[:, y0:y1 + 1, x0:x1 + 1] += a.unsqueeze(0)
 
-        prev_a = a_acc[:, y0 : y1 + 1, x0 : x1 + 1]
-        one_minus = (1.0 - prev_a)
-
-        # front-to-back compositing
-        img[:, y0 : y1 + 1, x0 : x1 + 1] = img[:, y0 : y1 + 1, x0 : x1 + 1] + one_minus * a * color[i].view(3, 1, 1)
-        a_acc[:, y0 : y1 + 1, x0 : x1 + 1] = prev_a + one_minus * a
-
-    return img.clamp(0, 1)
+    pred = acc_rgb / acc_a.clamp_min(1e-6)
+    pred = pred.clamp(0, 1)
+    # store x,y,mask for backward
+    aux = (idx, mask, x, y)
+    return pred, acc_rgb, acc_a, aux
 
 
+@torch.no_grad()
+def manual_backward_update(
+        pos: torch.Tensor,
+        color: torch.Tensor,    # (N,3)
+        opacity: torch.Tensor,  # (N,1)
+        gt_rgb: torch.Tensor,   # (3,H,W)
+        view: torch.Tensor,
+        proj: torch.Tensor,
+        H: int,
+        W: int,
+        max_splats: int,
+        R: int,
+        lr: float,
+):
+    """
+    Computes gradients manually (MSE) and applies SGD step to color/opacity.
+    """
+    pred, acc_rgb, acc_a, aux = render_and_accumulate(pos, color, opacity, view, proj, H, W, max_splats, R)
+    if aux is None:
+        return pred, float(((pred - gt_rgb) ** 2).mean().item())
+
+    # MSE loss
+    diff = (pred - gt_rgb)
+    loss = (diff * diff).mean()
+    loss_val = float(loss.item())
+
+    # dL/dpred
+    # mean over (3*H*W)
+    dL_dpred = (2.0 / (3.0 * H * W)) * diff  # (3,H,W)
+
+    idx_sub, mask, x, y = aux
+
+    # We need the exact tensors used in forward after subsample+mask.
+    N = pos.shape[0]
+    if N > max_splats:
+        idx = idx_sub
+        pos_s = pos[idx]
+        color_s = color[idx]
+        op_s = opacity[idx].squeeze(1)
+    else:
+        pos_s = pos
+        color_s = color
+        op_s = opacity.squeeze(1)
+
+    # apply mask
+    pos_k = pos_s[mask]
+    color_k = color_s[mask].clamp(0, 1)
+    op_k = op_s[mask].clamp(0, 1)  # (K,)
+
+    K = int(x.shape[0])
+    sigma2 = float(R * R)
+
+    # grads for the selected, masked set
+    g_color = torch.zeros_like(color_k)
+    g_op = torch.zeros_like(op_k)
+
+    # We need pred + denom per pixel for the quotient derivative
+    denom = acc_a.clamp_min(1e-6)     # (1,H,W)
+    pred_local = pred                 # (3,H,W)
+
+    for i in range(K):
+        xi = x[i].item()
+        yi = y[i].item()
+
+        cx = int(round(xi))
+        cy = int(round(yi))
+
+        x0 = max(0, cx - R)
+        x1 = min(W - 1, cx + R)
+        y0 = max(0, cy - R)
+        y1 = min(H - 1, cy + R)
+        if x1 < x0 or y1 < y0:
+            continue
+
+        xs = torch.arange(x0, x1 + 1, device=pos.device, dtype=torch.float32)
+        ys = torch.arange(y0, y1 + 1, device=pos.device, dtype=torch.float32)
+        yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+
+        dx = xx - float(xi)
+        dy = yy - float(yi)
+        wgt = torch.exp(-(dx * dx + dy * dy) / (2.0 * sigma2 + 1e-6))  # (h,w)
+
+        # effective alpha contribution for this splat at pixels
+        a = (op_k[i].item() * wgt).clamp(0, 1)  # (h,w)
+
+        # slices
+        dL = dL_dpred[:, y0:y1 + 1, x0:x1 + 1]      # (3,h,w)
+        den = denom[:, y0:y1 + 1, x0:x1 + 1]        # (1,h,w)
+        pr  = pred_local[:, y0:y1 + 1, x0:x1 + 1]   # (3,h,w)
+
+        # d pred / d color_i  = a/den  (per channel)
+        coeff = (a / den.squeeze(0)).clamp(0, 1e6)  # (h,w)
+        # g_color_i[c] += sum_{pixels} dL_dpred[c] * coeff
+        for c in range(3):
+            g_color[i, c] += (dL[c] * coeff).sum()
+
+        # d pred_c / d opacity_i = wgt/den * (color_c - pred_c)
+        coeff2 = (wgt / den.squeeze(0)).clamp(0, 1e6)  # (h,w)
+        g_op[i] += (dL * (color_k[i].view(3, 1, 1) - pr) * coeff2).sum()
+
+    # Apply SGD update back to original tensors
+    # Map gradients back through subsampling + mask
+    if N > max_splats:
+        # indices of chosen splats in original
+        chosen = idx_sub
+        chosen_masked = chosen[mask]  # (K,)
+        color[chosen_masked] -= lr * g_color
+        opacity[chosen_masked, 0] -= lr * g_op
+    else:
+        # all splats used; mask indexes directly
+        mask_idx = torch.nonzero(mask, as_tuple=False).squeeze(1)
+        color[mask_idx] -= lr * g_color
+        opacity[mask_idx, 0] -= lr * g_op
+
+    # clamp parameters
+    color.clamp_(0, 1)
+    opacity.clamp_(0, 1)
+
+    return pred, loss_val
+
+
+# -----------------------------
+# Main
+# -----------------------------
 def main():
     gt = load_first_gt_frame("captures/gt")
     print(f"Loaded GT frame {gt.idx} rgb={tuple(gt.rgb.shape)} depth={tuple(gt.depth.shape)}")
 
-    # Use SPL2 dumps
-    spl_chunk = load_one_nonempty_chunk("captures/splats_v2")
-    print(f"Loaded chunk ({spl_chunk.cx},{spl_chunk.cy}) splats={spl_chunk.splats10.shape[0]}")
+    spl10 = load_training_splats("captures/splats_v2", max_chunks=32)
 
-    # Build tensors
-    spl10 = spl_chunk.splats10
     pos = spl10[:, 0:3].contiguous()
     scale = spl10[:, 3:6].contiguous()
 
-    # Trainable params: color + opacity
-    color_init = spl10[:, 6:9].clamp(0, 1)
-    opacity_init = spl10[:, 9:10].clamp(0, 1)
+    # We only train color+opacity for now (CPU debug)
+    color = spl10[:, 6:9].clamp(0, 1).clone().contiguous()
+    opacity = spl10[:, 9:10].clamp(0, 1).clone().contiguous()
 
-    color = torch.nn.Parameter(color_init.clone())
-    opacity = torch.nn.Parameter(opacity_init.clone())
-
-    # Render at a smaller resolution for speed
+    # Smaller render resolution
     H, W = 180, 320
     gt_rgb_small = F.interpolate(gt.rgb.unsqueeze(0), size=(H, W), mode="bilinear", align_corners=False).squeeze(0)
 
-    # Before
-    img0 = render_gaussian_splats(pos, scale, color.clamp(0, 1), opacity.clamp(0, 1), gt.view, gt.proj, H, W, max_splats=4000)
-    save_tensor_image("out/debug_before.png", img0)
+    # Forward before
+    pred0, _, _, _ = render_and_accumulate(pos, color, opacity, gt.view, gt.proj, H, W, max_splats=4000, R=3)
+    save_tensor_image("out/debug_before.png", pred0)
 
-    # Train (tiny first run)
-    opt = torch.optim.Adam([color, opacity], lr=1e-2)
-
+    # Manual training
     steps = 100
+    lr = 5e-2  # manual SGD; adjust if needed
     for it in range(steps):
-        opt.zero_grad(set_to_none=True)
-
-        pred = render_gaussian_splats(pos, scale, color.clamp(0, 1), opacity.clamp(0, 1), gt.view, gt.proj, H, W, max_splats=4000)
-        loss = (pred - gt_rgb_small).abs().mean()
-
-        loss.backward()
-        opt.step()
-
-        # Keep params in range (in-place clamp on .data for simplicity)
-        color.data.clamp_(0, 1)
-        opacity.data.clamp_(0, 1)
-
-        if (it % 10) == 0 or it == steps - 1:
-            print(f"iter {it:04d} loss={loss.item():.6f}")
+        pred, loss_val = manual_backward_update(
+            pos=pos,
+            color=color,
+            opacity=opacity,
+            gt_rgb=gt_rgb_small,
+            view=gt.view,
+            proj=gt.proj,
+            H=H, W=W,
+            max_splats=4000,
+            R=3,
+            lr=lr
+        )
+        if it % 10 == 0 or it == steps - 1:
+            print(f"iter {it:04d} loss={loss_val:.6f}")
 
     # After
-    img1 = render_gaussian_splats(pos, scale, color.clamp(0, 1), opacity.clamp(0, 1), gt.view, gt.proj, H, W, max_splats=4000)
-    save_tensor_image("out/debug_after.png", img1)
+    pred1, _, _, _ = render_and_accumulate(pos, color, opacity, gt.view, gt.proj, H, W, max_splats=4000, R=3)
+    save_tensor_image("out/debug_after.png", pred1)
 
-    # --- Export trained splats (SPL2/v2) ---
-    trained = torch.cat([
-        pos,
-        scale,
-        color.clamp(0, 1),
-        opacity.clamp(0, 1)
-    ], dim=1).contiguous()
-
-    out_dir = "captures/splats_trained"
-    out_path = os.path.join(out_dir, f"chunk_{spl_chunk.cx}_{spl_chunk.cy}.splats.bin")
-    write_spl2_chunk(out_path, spl_chunk.cx, spl_chunk.cy, trained)
+    # Export trained splats (keep pos/scale fixed)
+    trained = torch.cat([pos, scale, color, opacity], dim=1).contiguous()
+    out_path = os.path.join("captures/splats_trained", "region_trained.splats.bin")
+    write_spl2_chunk(out_path, 0, 0, trained)
 
     print("Wrote out/debug_before.png and out/debug_after.png")
-    print(f"Exported trained splats to: {out_path}")
+    print("Exported trained splats to:", out_path)
 
 
 if __name__ == "__main__":
