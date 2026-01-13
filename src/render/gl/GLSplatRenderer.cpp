@@ -229,6 +229,7 @@ void GLSplatRenderer::UploadSplats(int cx, int cz, const std::vector<Splat>& spl
     );
     glVertexAttribDivisor(7, 1); // per instance
 
+
     // Cleanup
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindVertexArray(0);

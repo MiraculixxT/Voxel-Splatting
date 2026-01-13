@@ -701,6 +701,7 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     m_ShadowMap.bindForRead(GL_TEXTURE1);
     m_BlockShader->setInt("uShadowMap", 1);
 
+
     // Check from where to where we should render
     ViewFrustum frustum;
     frustum.Update(projection * view);
