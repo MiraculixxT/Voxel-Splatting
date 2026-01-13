@@ -12,6 +12,10 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <map>
+#include <utility>
+
+#include "game/Chunk.hpp"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -141,6 +145,153 @@ namespace {
     };
 
     GroundTruthCapture g_gt;
+
+    // Global toggle used by the F7 hotkey
+    static bool g_useTrainedSplats = false;
+
+    // Cache trained splats loaded from a folder (so we don't re-read every toggle)
+    template <typename TSplat>
+    struct TrainedCache {
+        bool loaded = false;
+        std::string folderAbs;
+        std::map<std::pair<int,int>, std::vector<TSplat>> byChunk;
+    };
+
+    template <typename TSplat>
+    static TrainedCache<TSplat>& GetTrainedCache() {
+        static TrainedCache<TSplat> cache;
+        return cache;
+    }
+
+    template <typename TSplat>
+    static void LoadTrainedFolderOnce(const std::string& trainedFolder) {
+        auto& cache = GetTrainedCache<TSplat>();
+
+        const std::string abs = std::filesystem::absolute(trainedFolder).string();
+        if (cache.loaded && cache.folderAbs == abs) return;
+
+        cache.loaded = true;
+        cache.folderAbs = abs;
+        cache.byChunk.clear();
+
+        if (!std::filesystem::exists(cache.folderAbs)) {
+            std::cout << "Trained folder does not exist: '" << cache.folderAbs << "'" << std::endl;
+            return;
+        }
+
+        size_t files = 0;
+        for (const auto& entry : std::filesystem::directory_iterator(cache.folderAbs)) {
+            if (!entry.is_regular_file()) continue;
+            const auto p = entry.path();
+            if (p.extension() != ".bin") continue;
+            // Accept any name; we read cx/cy from the header
+            int cx = 0, cy = 0;
+            std::vector<TSplat> spl;
+            if (ReadSPL2v2ChunkFile<TSplat>(p.string(), cx, cy, spl)) {
+                cache.byChunk[{cx, cy}] = std::move(spl);
+                files++;
+            }
+        }
+
+        std::cout << "Loaded trained cache: filesRead=" << files
+                  << " chunksCached=" << cache.byChunk.size()
+                  << " folder='" << cache.folderAbs << "'" << std::endl;
+    }
+
+    template <typename TSplat>
+    static bool ReadSPL2v2ChunkFile(const std::string& path, int& outCx, int& outCy, std::vector<TSplat>& outSplats) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return false;
+
+        // Header: magic(u32), version(u32), cx(i32), cy(i32), count(u32), stride(u32)
+        uint32_t magic = 0, version = 0, count = 0, stride = 0;
+        int32_t cx = 0, cy = 0;
+        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        in.read(reinterpret_cast<char*>(&version), sizeof(version));
+        in.read(reinterpret_cast<char*>(&cx), sizeof(cx));
+        in.read(reinterpret_cast<char*>(&cy), sizeof(cy));
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+        in.read(reinterpret_cast<char*>(&stride), sizeof(stride));
+
+        if (!in) return false;
+        if (magic != 0x53504C32u || version != 2u) {
+            std::cerr << "Trained splat file has wrong header (expected SPL2/v2): " << path << std::endl;
+            return false;
+        }
+        // We expect 10 float32 per splat: pos3, scale3, color3, opacity1
+        if (stride != 10u * sizeof(float)) {
+            std::cerr << "Trained splat file has unexpected stride " << stride << " (expected " << (10u * sizeof(float)) << ") in " << path << std::endl;
+            return false;
+        }
+
+        outCx = static_cast<int>(cx);
+        outCy = static_cast<int>(cy);
+        outSplats.clear();
+        outSplats.reserve(static_cast<size_t>(count));
+
+        for (uint32_t i = 0; i < count; ++i) {
+            float data[10];
+            in.read(reinterpret_cast<char*>(data), sizeof(data));
+            if (!in) break;
+
+            TSplat s{};
+            s.position = glm::vec3(data[0], data[1], data[2]);
+            s.scale    = glm::vec3(data[3], data[4], data[5]);
+            s.color    = glm::vec3(data[6], data[7], data[8]);
+            s.opacity  = data[9];
+
+            // Defaults for fields not stored in SPL2/v2
+            s.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            s.uv     = glm::vec2(0.0f, 0.0f);
+            s.layer  = 0.0f;
+
+            outSplats.push_back(s);
+        }
+
+        if (outSplats.size() != static_cast<size_t>(count)) {
+            std::cerr << "Trained splat file ended early: " << path << " read " << outSplats.size() << " / " << count << std::endl;
+        }
+
+        return !outSplats.empty();
+    }
+
+    template <typename TSplat>
+    static void ApplySplatOverrideToLoadedWorld(const std::string& trainedFolder,
+                                                GLSplatRenderer* splatRenderer,
+                                                const decltype(std::declval<World>().getChunks())& chunks) {
+        if (!splatRenderer) return;
+
+        // Ensure cache is loaded (reads cx/cy from headers, independent of filenames)
+        LoadTrainedFolderOnce<TSplat>(trainedFolder);
+        auto& cache = GetTrainedCache<TSplat>();
+
+        size_t trainedUsed = 0;
+        size_t totalChunks = 0;
+
+        for (auto [cx, column] : chunks) {
+            for (auto& [cy, chunk] : column) {
+                totalChunks++;
+
+                // If override is OFF, always upload original splats
+                if (!g_useTrainedSplats) {
+                    splatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
+                    continue;
+                }
+
+                // Override ON: use trained if we have it, else fallback
+                auto it = cache.byChunk.find({cx, cy});
+                if (it != cache.byChunk.end()) {
+                    splatRenderer->UploadSplats(cx, cy, it->second);
+                    trainedUsed++;
+                } else {
+                    splatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
+                }
+            }
+        }
+
+        std::cout << "Splat override applied. trainedUsed=" << trainedUsed << " / " << totalChunks
+                  << " folder='" << cache.folderAbs << "'" << std::endl;
+    }
 
 
     template <typename TSplat>
@@ -364,12 +515,12 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     // 1) Render depth into shadow map
     RenderShadowPass();
 
-    // --- Optional: capture mesh-only ground truth images (F9 = single, F10 = toggle continuous) ---
-    {
-    // --- Optional: dump current loaded splats to disk (press F8) ---
+    // --- Debug / capture hotkeys ---
+    GLFWwindow* win = glfwGetCurrentContext();
+
+    // F8: dump current loaded splats (generated in-engine) to disk
     {
         static bool prevF8 = false;
-        GLFWwindow* win = glfwGetCurrentContext();
         const bool f8 = (win && glfwGetKey(win, GLFW_KEY_F8) == GLFW_PRESS);
         const bool f8Edge = f8 && !prevF8;
         prevF8 = f8;
@@ -378,13 +529,31 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
             DumpAllLoadedSplats("captures/splats_v2", m_World.getChunks());
         }
     }
+
+    // F7: toggle trained-splats override and re-upload splats for all loaded chunks
+    {
+        static bool prevF7 = false;
+        const bool f7 = (win && glfwGetKey(win, GLFW_KEY_F7) == GLFW_PRESS);
+        const bool f7Edge = f7 && !prevF7;
+        prevF7 = f7;
+
+        if (f7Edge) {
+            g_useTrainedSplats = !g_useTrainedSplats;
+            std::cout << (g_useTrainedSplats ? "Trained splats: ON" : "Trained splats: OFF") << std::endl;
+
+            using TSplat = Splat;
+            ApplySplatOverrideToLoadedWorld<TSplat>("captures/splats_trained", m_SplatRenderer, m_World.getChunks());
+        }
+    }
+
+    // F9: capture once | F10: toggle continuous capture (every N frames)
+    {
         static bool prevF9 = false;
         static bool prevF10 = false;
         static bool continuous = false;
         static int frameCounter = 0;
-        constexpr int CAPTURE_EVERY_N_FRAMES = 30; // in continuous mode
+        constexpr int CAPTURE_EVERY_N_FRAMES = 30;
 
-        GLFWwindow* win = glfwGetCurrentContext();
         const bool f9 = (win && glfwGetKey(win, GLFW_KEY_F9) == GLFW_PRESS);
         const bool f10 = (win && glfwGetKey(win, GLFW_KEY_F10) == GLFW_PRESS);
 
@@ -424,7 +593,6 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-            // Use deterministic camera matrices and correct aspect ratio for the GT target
             const float aspectGT = static_cast<float>(g_gt.w) / static_cast<float>(g_gt.h);
             const glm::mat4 projectionGT = glm::perspective(
                 glm::radians(m_Camera.Zoom),
@@ -434,7 +602,6 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
             );
             const glm::mat4 viewGT = m_Camera.GetViewMatrix();
 
-            // Bind mesh shader and textures just like the normal mesh pass, but keep it deterministic
             m_BlockShader->use();
             m_BlockShader->setMat4("projection", projectionGT);
             m_BlockShader->setMat4("view", viewGT);
@@ -444,11 +611,11 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
             m_BlockShader->setVec3("uLightDir", m_SunDir);
             m_BlockShader->setVec3("cameraPosition", m_Camera.Position);
 
-            // Disable fog for GT (avoid view-dependent blending differences)
+            // Disable fog for GT
             m_BlockShader->setFloat("fogStart", 1e9f);
             m_BlockShader->setFloat("fogEnd", 1e9f + 1.0f);
 
-            // Freeze time for GT (avoid animated water/leaves/noise in reference)
+            // Freeze time for GT
             m_BlockShader->setFloat("time", 0.0f);
 
             glActiveTexture(GL_TEXTURE0);
@@ -457,7 +624,6 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
             m_ShadowMap.bindForRead(GL_TEXTURE1);
             m_BlockShader->setInt("uShadowMap", 1);
 
-            // Render chunks in range
             ViewFrustum frustumGT;
             frustumGT.Update(projectionGT * viewGT);
             const glm::ivec2 centerGT(std::floor(m_Camera.Position.x), std::floor(m_Camera.Position.z));
@@ -469,12 +635,10 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
 
             m_ChunkRenderer->Render(frustumGT, fromXGT, toXGT, fromZGT, toZGT);
 
-            // Save RGB, linear depth, and camera meta
             g_gt.captureToPNG("captures/gt");
             g_gt.captureDepthLinearToBIN("captures/gt", m_Settings.GLFrom, m_Settings.GLTo);
             g_gt.captureCameraMeta("captures/gt", viewGT, projectionGT);
 
-            // Restore framebuffer + viewport
             glBindFramebuffer(GL_FRAMEBUFFER, prevFBO);
             glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
         }
