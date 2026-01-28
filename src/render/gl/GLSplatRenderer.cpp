@@ -5,6 +5,7 @@
 #include <string>
 #include <fstream>
 #include <sstream>
+#include <limits>
 
 struct GPUInstance {
     glm::vec3 position;
@@ -169,6 +170,12 @@ void GLSplatRenderer::UploadSplats(int cx, int cz, const std::vector<Splat>& spl
     glBindVertexArray(0);
 }
 
+void GLSplatRenderer::UploadGlobalSplats(const std::vector<Splat>& splats) {
+    // Use a sentinel key so global splats are always drawn.
+    constexpr int kGlobalKey = std::numeric_limits<int>::max();
+    UploadSplats(kGlobalKey, kGlobalKey, splats);
+}
+
 void GLSplatRenderer::RemoveSplats(int cx, int cz) {
     std::pair<int,int> key{cx, cz};
     auto it = buffers.find(key);
@@ -239,10 +246,13 @@ void GLSplatRenderer::Draw(const glm::mat4& viewProj,
         const int cx = key.first;
         const int cz = key.second;
 
-        int dx = cx - camChunkX;
-        int dz = cz - camChunkZ;
-        if (std::max(std::abs(dx), std::abs(dz)) > maxChunkDistance) {
-            continue;
+        const bool isGlobal = (cx == std::numeric_limits<int>::max() && cz == std::numeric_limits<int>::max());
+        if (!isGlobal) {
+            int dx = cx - camChunkX;
+            int dz = cz - camChunkZ;
+            if (std::max(std::abs(dx), std::abs(dz)) > maxChunkDistance) {
+                continue;
+            }
         }
 
         const ChunkSplatBuffer& buf = entry.second;

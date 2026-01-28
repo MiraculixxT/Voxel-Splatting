@@ -11,6 +11,7 @@ public:
     // OpenGL clipping planes
     float GLFrom = 0.1f;
     float GLTo = 100.0f;
+    bool GLGeometry = true;
 
     // Fog settings
     float FogStartMult = 0.85;

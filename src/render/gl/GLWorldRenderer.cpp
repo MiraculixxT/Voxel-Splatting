@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <cstdint>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -142,7 +143,6 @@ namespace {
 
     GroundTruthCapture g_gt;
 
-
     template <typename TSplat>
     static void DumpChunkSplatsBinary(const std::string& folder, int cx, int cy, const std::vector<TSplat>& splats) {
         std::filesystem::create_directories(folder);
@@ -216,6 +216,67 @@ namespace {
         manifest.close();
 
         std::cout << "Dumped splats: " << totalSplats << " across " << totalChunks << " chunks to " << folder << std::endl;
+    }
+
+    struct LoadedSplats {
+        int cx = 0;
+        int cy = 0;
+        std::vector<Splat> splats;
+    };
+
+    static bool LoadSpl2File(const std::string& path, LoadedSplats& out) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            std::cerr << "Failed to open trained splats: " << path << std::endl;
+            return false;
+        }
+
+        uint32_t magic = 0;
+        uint32_t version = 0;
+        int32_t cx = 0;
+        int32_t cy = 0;
+        uint32_t count = 0;
+        uint32_t stride = 0;
+
+        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        in.read(reinterpret_cast<char*>(&version), sizeof(version));
+        in.read(reinterpret_cast<char*>(&cx), sizeof(cx));
+        in.read(reinterpret_cast<char*>(&cy), sizeof(cy));
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+        in.read(reinterpret_cast<char*>(&stride), sizeof(stride));
+
+        if (!in || magic != 0x53504C32 || version != 2 || stride != 40) {
+            std::cerr << "Invalid SPL2 header in " << path << std::endl;
+            return false;
+        }
+
+        std::vector<float> raw(static_cast<size_t>(count) * 10u);
+        in.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(raw.size() * sizeof(float)));
+        if (!in) {
+            std::cerr << "Truncated SPL2 payload in " << path << std::endl;
+            return false;
+        }
+
+        out.cx = cx;
+        out.cy = cy;
+        out.splats.clear();
+        out.splats.reserve(count);
+
+        for (uint32_t i = 0; i < count; ++i) {
+            const float* f = raw.data() + i * 10u;
+            Splat s;
+            s.position = glm::vec3(f[0], f[1], f[2]);
+            s.scale    = glm::vec3(f[3], f[4], f[5]);
+            s.color    = glm::vec3(f[6], f[7], f[8]);
+            s.opacity  = f[9];
+            // Trained SPL2 only stores pos/scale/color/opacity; fill required defaults.
+            s.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            s.uv     = glm::vec2(0.5f, 0.5f);
+            s.layer  = 0.0f;
+            out.splats.push_back(s);
+        }
+
+        return true;
     }
 }
 
@@ -321,15 +382,27 @@ void GLWorldRenderer::Init() {
     m_ChunkRenderer = new GLChunkRenderer(m_Camera, m_Settings);
     m_SplatRenderer = new GLSplatRenderer();
 
+    // Load and upload trained global splats (if present)
+    {
+        LoadedSplats trained;
+        const std::string trainedPath = "captures/splats_trained/region_trained.splats.bin";
+        if (LoadSpl2File(trainedPath, trained)) {
+            m_SplatRenderer->UploadGlobalSplats(trained.splats);
+            std::cout << "Loaded trained splats: " << trained.splats.size() << std::endl;
+        }
+    }
+
     // Register renderers in world so the mesh worker can upload to them
 
     // Build and upload initial meshes and splats for already generated chunks
-    for (auto [cx, column] : m_World.getChunks()) {
-        for (auto& [cy, chunk] : column) {
-            chunk->BuildMesh(m_World);
-            chunk->BuildSplats(m_World);
-            m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
-            m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
+    if (m_Settings.GLGeometry) {
+        for (auto [cx, column] : m_World.getChunks()) {
+            for (auto& [cy, chunk] : column) {
+                chunk->BuildMesh(m_World);
+                //chunk->BuildSplats(m_World);
+                m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+                //m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
+            }
         }
     }
 }
@@ -542,7 +615,7 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     const int toX   = (center.x + renderDistance) / CHUNK_WIDTH;
     const int fromZ = (center.y - renderDistance) / CHUNK_WIDTH - 1;
     const int toZ   = (center.y + renderDistance) / CHUNK_WIDTH;
-    m_ChunkRenderer->Render(frustum, fromX, toX, fromZ, toZ);
+    if (m_Settings.GLGeometry) m_ChunkRenderer->Render(frustum, fromX, toX, fromZ, toZ);
 
     // Render Gaussian splats using the same view-projection and lighting/shadow data
     if (m_SplatRenderer) {

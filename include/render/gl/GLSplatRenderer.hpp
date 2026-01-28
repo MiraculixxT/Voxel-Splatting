@@ -30,6 +30,11 @@ public:
      */
     void Draw(const glm::mat4& viewProj, int camChunkX, int camChunkZ, int maxChunkDistance);
 
+    /**
+     * @brief Uploads a global splat set that is not tied to a chunk.
+     */
+    void UploadGlobalSplats(const std::vector<Splat>& splats);
+
     // Configure lighting and shadow mapping for splats
     void SetLighting(const glm::mat4& lightViewProj, GLuint shadowTexture, const glm::vec3& lightDir);
 
