@@ -1,26 +1,34 @@
 import os
 import glob
+import math
 import numpy as np
 import torch
 import imageio.v2 as imageio
 from tqdm import tqdm
 from plyfile import PlyData, PlyElement
 import torch.nn.functional as F
+from gsplat import rasterization
 
-from gsplat.rendering import rasterization
+# --- HYPERPARAMETERS ---
+# Tuned for sharp, voxel-like scenes
+DENSIFY_START_ITER = 500
+DENSIFY_END_ITER = 15_000
+DENSIFY_INTERVAL = 100
+PRUNE_INTERVAL = 100
+OPACITY_RESET_INTERVAL = 3000
 
+# Thresholds
+GRAD_THRESHOLD = 0.0002       # Sensitivity to high-error areas (lower = more points)
+SCALE_THRESHOLD = 0.05        # If a splat is bigger than this, split it
+OPACITY_THRESHOLD = 0.005     # Prune invisible points
 
 class SceneDataset:
-    def __init__(self, data_dir, device="cuda", max_init_points=300_000, stride=8):
+    def __init__(self, data_dir, device="cuda"):
         self.images = []
         self.cameras = []
         self.point_cloud = []
         self.colors = []
         self.device = device
-
-        self.max_init_points = int(max_init_points)
-        self.stride = int(stride)
-        self._init_point_count = 0
 
         meta_files = sorted(glob.glob(os.path.join(data_dir, "gt_*.meta.txt")))
         print(f"Found {len(meta_files)} captures. Loading...")
@@ -29,226 +37,341 @@ class SceneDataset:
             base_name = meta_path.replace(".meta.txt", "")
             img_path = base_name + ".png"
             depth_path = base_name + ".depth.bin"
+
             if not os.path.exists(img_path) or not os.path.exists(depth_path):
                 continue
 
-            # --- METADATA ---
-            with open(meta_path, "r") as f:
+            # 1. Load Metadata
+            with open(meta_path, 'r') as f:
                 lines = f.readlines()
                 w = int(lines[0].strip().split()[1])
                 h = int(lines[1].strip().split()[1])
-
                 view_vals = [float(x) for x in lines[2].strip().split()[1:]]
                 view_mat = torch.tensor(view_vals, dtype=torch.float32).reshape(4, 4)
-
                 proj_vals = [float(x) for x in lines[3].strip().split()[1:]]
                 proj_mat = torch.tensor(proj_vals, dtype=torch.float32).reshape(4, 4)
 
+            # 2. Extract Intrinsics/Extrinsics
             c2w = torch.inverse(view_mat)
-
             fx = proj_mat[0, 0] * w / 2.0
             fy = proj_mat[1, 1] * h / 2.0
-            cx = w / 2.0
-            cy = h / 2.0
+            cx, cy = w / 2.0, h / 2.0
 
-            # --- IMAGE ---
+            # 3. Load Image
             img = imageio.imread(img_path)
             img_tensor = torch.from_numpy(img).float() / 255.0
-            if img_tensor.shape[2] == 4:
-                img_tensor = img_tensor[:, :, :3]
+            if img_tensor.shape[2] == 4: img_tensor = img_tensor[:, :, :3]
 
-            # --- DEPTH ---
+            # 4. Load Depth
             depth_data = np.fromfile(depth_path, dtype=np.float32).reshape(h, w)
             depth_tensor = torch.from_numpy(depth_data).to(device)
 
-            # --- BACK-PROJECT (init points) ---
-            if self._init_point_count < self.max_init_points:
-                s = self.stride
+            # 5. Back-project subset for initialization
+            if len(self.point_cloud) < 100_000:
+                stride = 4 # Tighter stride for better initial coverage
                 ys, xs = torch.meshgrid(
-                    torch.arange(0, h, s, device=device),
-                    torch.arange(0, w, s, device=device),
-                    indexing="ij",
+                    torch.arange(0, h, stride, device=device),
+                    torch.arange(0, w, stride, device=device),
+                    indexing='ij'
                 )
-
-                z = depth_tensor[::s, ::s]
+                z = depth_tensor[::stride, ::stride]
                 valid_mask = z > 0.01
 
                 x_cam = (xs - cx) * z / fx
                 y_cam = (ys - cy) * z / fy
-                z_cam = z
+                xyz_cam = torch.stack([x_cam[valid_mask], y_cam[valid_mask], z[valid_mask]], dim=-1)
 
-                xyz_cam = torch.stack(
-                    [x_cam[valid_mask], y_cam[valid_mask], z_cam[valid_mask]], dim=-1
-                )
-
-                R = c2w[:3, :3].to(device)
-                T = c2w[:3, 3].to(device)
+                R, T = c2w[:3, :3].to(device), c2w[:3, 3].to(device)
                 xyz_world = (xyz_cam @ R.T) + T
 
-                img_small = img_tensor[::s, ::s].to(device)
-                cols = img_small[valid_mask]
-
-                remain = self.max_init_points - self._init_point_count
-                take = min(remain, xyz_world.shape[0])
-                if take > 0:
-                    self.point_cloud.append(xyz_world[:take])
-                    self.colors.append(cols[:take])
-                    self._init_point_count += take
+                self.point_cloud.append(xyz_world)
+                self.colors.append(img_tensor[::stride, ::stride].to(device)[valid_mask])
 
             self.images.append(img_tensor.to(device))
-            self.cameras.append(
-                {
-                    "c2w": c2w.to(device),
-                    "fx": fx,
-                    "fy": fy,
-                    "cx": cx,
-                    "cy": cy,
-                    "height": h,
-                    "width": w,
-                }
-            )
+
+            K = torch.eye(3, device=device)
+            K[0,0], K[1,1] = fx, fy
+            K[0,2], K[1,2] = cx, cy
+
+            self.cameras.append({
+                "viewmat": view_mat.to(device),
+                "K": K,
+                "width": w, "height": h
+            })
 
         self.init_points = torch.cat(self.point_cloud, dim=0)
         self.init_colors = torch.cat(self.colors, dim=0)
         print(f"Initialized with {self.init_points.shape[0]} points.")
 
 
-class SimpleTrainer:
+class AdvancedTrainer:
     def __init__(self, dataset):
         self.device = torch.device("cuda")
         self.dataset = dataset
 
-        self.num_points = dataset.init_points.shape[0]
+        # --- Parameters ---
+        self._means = torch.nn.Parameter(dataset.init_points.contiguous().requires_grad_(True))
+        self._scales = torch.nn.Parameter(torch.log(torch.ones(len(dataset.init_points), 3, device=self.device) * 0.01).requires_grad_(True))
+        self._quats = torch.nn.Parameter(torch.zeros(len(dataset.init_points), 4, device=self.device).requires_grad_(True))
+        self._quats.data[:, 0] = 1.0
+        self._opacities = torch.nn.Parameter(torch.zeros(len(dataset.init_points), 1, device=self.device).requires_grad_(True))
+        self._colors = torch.nn.Parameter(torch.logit(dataset.init_colors).requires_grad_(True))
 
-        self.means = torch.nn.Parameter(dataset.init_points.contiguous().requires_grad_(True))
-        self.scales = torch.nn.Parameter(
-            torch.log(torch.ones(self.num_points, 3, device=self.device) * 0.01).requires_grad_(True)
-        )
-        self.quats = torch.nn.Parameter(torch.zeros(self.num_points, 4, device=self.device).requires_grad_(True))
-        self.quats.data[:, 0] = 1.0
+        # Optimizer setup
+        self.setup_optimizer()
 
-        # IMPORTANT: opacities must be (N,) for gsplat
-        self.opacities = torch.nn.Parameter(
-            torch.logit(torch.ones(self.num_points, device=self.device) * 0.5).requires_grad_(True)
-        )
+        # Gradient accumulation for densification
+        self.xyz_gradient_accum = torch.zeros(self._means.shape[0], device=self.device)
+        self.denom = torch.zeros(self._means.shape[0], device=self.device)
 
-        # IMPORTANT: SH degree 0 must be (N, 1, 3) for gsplat when sh_degree=0
-        self.sh0 = torch.nn.Parameter(
-            (dataset.init_colors / 0.28209).unsqueeze(1).contiguous().requires_grad_(True)
-        )
+    def setup_optimizer(self):
+        self.optimizer = torch.optim.Adam([
+            {'params': [self._means], 'lr': 0.00016 * 5.0, "name": "means"},
+            {'params': [self._scales], 'lr': 0.005, "name": "scales"},
+            {'params': [self._quats], 'lr': 0.001, "name": "quats"},
+            {'params': [self._opacities], 'lr': 0.05, "name": "opacities"},
+            {'params': [self._colors], 'lr': 0.0025, "name": "colors"}
+        ])
 
-        self.optimizer = torch.optim.Adam(
-            [
-                {"params": [self.means], "lr": 0.00016 * 10},
-                {"params": [self.scales], "lr": 0.005},
-                {"params": [self.quats], "lr": 0.001},
-                {"params": [self.opacities], "lr": 0.05},
-                {"params": [self.sh0], "lr": 0.0025},
-            ]
-        )
-
-    def train(self, iterations=2000):
-        print("Starting training...")
+    def train(self, iterations=7000):
+        print(f"Starting training for {iterations} iterations...")
         pbar = tqdm(range(iterations))
 
         for i in pbar:
+            # 1. Get Batch
             idx = np.random.randint(0, len(self.dataset.images))
-            cam = self.dataset.cameras[idx]
-            gt_image = self.dataset.images[idx]
+            cam, gt_image = self.dataset.cameras[idx], self.dataset.images[idx]
 
-            viewmat = torch.inverse(cam["c2w"])
+            # 2. Rasterize
+            viewmats = cam['viewmat'].unsqueeze(0)
+            Ks = cam['K'].unsqueeze(0)
 
-            K = torch.eye(3, device=self.device)
-            K[0, 0], K[1, 1] = cam["fx"], cam["fy"]
-            K[0, 2], K[1, 2] = cam["cx"], cam["cy"]
+            render_colors, render_alphas, info = rasterization(
+                self._means,
+                self._quats / self._quats.norm(dim=-1, keepdim=True),
+                torch.exp(self._scales),
+                torch.sigmoid(self._opacities).squeeze(-1),
+                torch.sigmoid(self._colors),
+                viewmats, Ks, cam['width'], cam['height'],
+                sh_degree=None
+            )
 
-            W, H = cam["width"], cam["height"]
+            # IMPORTANT: Retain gradients of 2D means for densification
+            if "means2d" in info:
+                info["means2d"].retain_grad()
 
-            out_img, alphas, _ = rasterization(
-                self.means,
-                self.quats / self.quats.norm(dim=-1, keepdim=True),
-                torch.exp(self.scales),
-                torch.sigmoid(self.opacities),   # (N,)
-                self.sh0,                        # (N,1,3)
-                viewmat.unsqueeze(0),
-                K.unsqueeze(0),
-                W,
-                H,
-                sh_degree=0,
-                )
-
-            loss = F.l1_loss(out_img[0], gt_image)
-
-            self.optimizer.zero_grad()
+            # 3. Loss
+            loss = F.l1_loss(render_colors[0], gt_image)
             loss.backward()
-            self.optimizer.step()
 
-            if i % 50 == 0:
-                pbar.set_description(f"Loss: {loss.item():.4f} | Pts: {self.num_points}")
+            # 4. Accumulate Gradients for Densification
+            with torch.no_grad():
+                if "means2d" in info and info["means2d"].grad is not None:
+                    grads = info["means2d"].grad
+                    # Norm of the gradient in 2D screen space
+                    grad_norm = grads.norm(dim=-1)
+                    # Only map gradients to visible points
+                    visible = info["radii"] > 0
+                    # Expand accumulators if needed (handled in densification, but here we just add)
+                    self.xyz_gradient_accum[visible] += grad_norm[visible]
+                    self.denom[visible] += 1
+
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+            # --- 5. ADAPTIVE DENSITY CONTROL ---
+            if i >= DENSIFY_START_ITER and i <= DENSIFY_END_ITER:
+                if i % DENSIFY_INTERVAL == 0:
+                    self.densify_and_prune(GRAD_THRESHOLD, SCALE_THRESHOLD)
+
+                if i % OPACITY_RESET_INTERVAL == 0:
+                    # Reset opacities to allow re-learning
+                    print("Resetting opacities...")
+                    new_opacities = torch.min(self._opacities.data, torch.zeros_like(self._opacities)* -1.0) # Reset to ~0.1
+                    self.replace_param(self._opacities, new_opacities, "opacities")
+
+            if i % 100 == 0:
+                pbar.set_description(f"Loss: {loss.item():.4f} | Pts: {self._means.shape[0]}")
+
+    def replace_param(self, old_param, new_tensor, name):
+        """Helper to replace parameters in optimizer state"""
+        # Create new parameter
+        new_param = torch.nn.Parameter(new_tensor.requires_grad_(True))
+
+        # Find param group
+        for group in self.optimizer.param_groups:
+            if group["name"] == name:
+                # Replace in group
+                group["params"][0] = new_param
+                # Copy old optimizer state (momentum, etc) if shape matches, else init new
+                state = self.optimizer.state[old_param]
+                new_state = {}
+                if state:
+                    # If shape changed, we usually just reset state for robustness
+                    # or interpolation, but resetting is safer for densification
+                    pass
+                self.optimizer.state[new_param] = new_state
+
+                # Update class reference
+                if name == "means": self._means = new_param
+                elif name == "scales": self._scales = new_param
+                elif name == "quats": self._quats = new_param
+                elif name == "opacities": self._opacities = new_param
+                elif name == "colors": self._colors = new_param
+                return
+
+    def densify_and_prune(self, grad_threshold, scene_scale_limit):
+        # Calculate average gradient per point
+        grads = self.xyz_gradient_accum / self.denom.clamp(min=1)
+        grads[self.denom == 0] = 0.0
+
+        # 1. IDENTIFY CANDIDATES
+        # High gradient means the Gaussian is struggling to fit the data
+        is_grad_high = grads > grad_threshold
+
+        # 2. CLONE (Under-reconstructed areas: high grad, small scale)
+        scales = torch.exp(self._scales)
+        max_scales = torch.max(scales, dim=1).values
+        is_small = max_scales <= scene_scale_limit
+        should_clone = is_grad_high & is_small
+
+        # 3. SPLIT (Over-reconstructed areas: high grad, big scale)
+        is_big = max_scales > scene_scale_limit
+        should_split = is_grad_high & is_big
+
+        # 4. PRUNE (Transparent or Huge)
+        is_transparent = torch.sigmoid(self._opacities).squeeze() < OPACITY_THRESHOLD
+        is_huge = max_scales > (scene_scale_limit * 5.0) # Removing very large floaters
+        should_prune = is_transparent | is_huge
+
+        # --- EXECUTE TOPOLOGY CHANGES ---
+
+        # Prepare new tensors
+        new_means = [self._means]
+        new_scales = [self._scales]
+        new_quats = [self._quats]
+        new_opacities = [self._opacities]
+        new_colors = [self._colors]
+
+        # Handle Clone
+        if should_clone.any():
+            new_means.append(self._means[should_clone])
+            new_scales.append(self._scales[should_clone])
+            new_quats.append(self._quats[should_clone])
+            new_opacities.append(self._opacities[should_clone])
+            new_colors.append(self._colors[should_clone])
+
+        # Handle Split
+        if should_split.any():
+            # Split 1 Gaussian into 2
+            # Sample positions from the Gaussian distribution
+            stds = scales[should_split].repeat(2, 1)
+            means = self._means[should_split].repeat(2, 1)
+            samples = torch.randn_like(means) * stds + means
+
+            new_means.append(samples)
+            # Reduce scale of children (divide by 1.6)
+            new_scales.append(torch.log(scales[should_split].repeat(2, 1) / 1.6))
+            new_quats.append(self._quats[should_split].repeat(2, 1))
+            new_opacities.append(self._opacities[should_split].repeat(2, 1))
+            new_colors.append(self._colors[should_split].repeat(2, 1))
+
+            # Mark original split parents for removal
+            should_prune = should_prune | should_split
+
+        # Apply changes
+        # Concatenate all new points
+        param_means = torch.cat(new_means)
+        param_scales = torch.cat(new_scales)
+        param_quats = torch.cat(new_quats)
+        param_opacities = torch.cat(new_opacities)
+        param_colors = torch.cat(new_colors)
+
+        # Filter out pruned points (negate mask)
+        # We need to build a mask for the TOTAL new set.
+        # The easiest way: keep everything, then prune.
+
+        # But `should_prune` corresponds to indices in the OLD set.
+        # We need to construct the keep mask carefully.
+
+        # Simplified approach:
+        # 1. Clone appends to end.
+        # 2. Split appends to end.
+        # 3. Prune removes from ORIGINAL set.
+
+        # Re-assemble:
+        # kept_original = original[~should_prune]
+        # clones = original[should_clone]
+        # splits = generated_splits
+
+        keep_mask = ~should_prune
+
+        final_means = torch.cat([self._means[keep_mask], *new_means[1:]])
+        final_scales = torch.cat([self._scales[keep_mask], *new_scales[1:]])
+        final_quats = torch.cat([self._quats[keep_mask], *new_quats[1:]])
+        final_opacities = torch.cat([self._opacities[keep_mask], *new_opacities[1:]])
+        final_colors = torch.cat([self._colors[keep_mask], *new_colors[1:]])
+
+        # Update Optimizer Parameters
+        self.replace_param(self._means, final_means, "means")
+        self.replace_param(self._scales, final_scales, "scales")
+        self.replace_param(self._quats, final_quats, "quats")
+        self.replace_param(self._opacities, final_opacities, "opacities")
+        self.replace_param(self._colors, final_colors, "colors")
+
+        # Clear Accumulators for new points
+        self.xyz_gradient_accum = torch.zeros(final_means.shape[0], device=self.device)
+        self.denom = torch.zeros(final_means.shape[0], device=self.device)
+
+        torch.cuda.empty_cache()
 
     def save_ply(self, path):
-        print(f"Saving to {path}...")
+        print(f"Saving {self._means.shape[0]} splats to {path}...")
+        xyz = self._means.detach().cpu().numpy()
 
-        xyz = self.means.detach().cpu().numpy()
-        normals = np.zeros_like(xyz)
+        rgb = torch.sigmoid(self._colors).detach().cpu().numpy()
+        f_dc = (rgb - 0.5) / 0.28209
 
-        # self.sh0 is (N,1,3) -> flatten to (N,3) for ply
-        f_dc = self.sh0.detach().contiguous().cpu().numpy()[:, 0, :]
+        opacities = torch.sigmoid(self._opacities).detach().cpu().numpy()
+        scales = torch.exp(self._scales).detach().cpu().numpy()
+        quats = self._quats.detach().cpu().numpy()
 
-        opacities = torch.sigmoid(self.opacities).detach().cpu().numpy()
-        scales = torch.exp(self.scales).detach().cpu().numpy()
-        quats = self.quats.detach().cpu().numpy()
-
-        dtype_full = [
-            ("x", "f4"),
-            ("y", "f4"),
-            ("z", "f4"),
-            ("nx", "f4"),
-            ("ny", "f4"),
-            ("nz", "f4"),
-            ("f_dc_0", "f4"),
-            ("f_dc_1", "f4"),
-            ("f_dc_2", "f4"),
-            ("opacity", "f4"),
-            ("scale_0", "f4"),
-            ("scale_1", "f4"),
-            ("scale_2", "f4"),
-            ("rot_0", "f4"),
-            ("rot_1", "f4"),
-            ("rot_2", "f4"),
-            ("rot_3", "f4"),
-        ]
+        dtype_full = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
+                      ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
+                      ('f_dc_0', 'f4'), ('f_dc_1', 'f4'), ('f_dc_2', 'f4'),
+                      ('opacity', 'f4'),
+                      ('scale_0', 'f4'), ('scale_1', 'f4'), ('scale_2', 'f4'),
+                      ('rot_0', 'f4'), ('rot_1', 'f4'), ('rot_2', 'f4'), ('rot_3', 'f4')]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        elements["x"] = xyz[:, 0]
-        elements["y"] = xyz[:, 1]
-        elements["z"] = xyz[:, 2]
-        elements["nx"] = normals[:, 0]
-        elements["ny"] = normals[:, 1]
-        elements["nz"] = normals[:, 2]
-        elements["f_dc_0"] = f_dc[:, 0]
-        elements["f_dc_1"] = f_dc[:, 1]
-        elements["f_dc_2"] = f_dc[:, 2]
-        elements["opacity"] = opacities[:]  # (N,)
-        elements["scale_0"] = scales[:, 0]
-        elements["scale_1"] = scales[:, 1]
-        elements["scale_2"] = scales[:, 2]
-        elements["rot_0"] = quats[:, 0]
-        elements["rot_1"] = quats[:, 1]
-        elements["rot_2"] = quats[:, 2]
-        elements["rot_3"] = quats[:, 3]
+        elements['x'] = xyz[:, 0]
+        elements['y'] = xyz[:, 1]
+        elements['z'] = xyz[:, 2]
+        elements['nx'] = np.zeros_like(xyz[:, 0])
+        elements['ny'] = np.zeros_like(xyz[:, 0])
+        elements['nz'] = np.zeros_like(xyz[:, 0])
+        elements['f_dc_0'] = f_dc[:, 0]
+        elements['f_dc_1'] = f_dc[:, 1]
+        elements['f_dc_2'] = f_dc[:, 2]
+        elements['opacity'] = opacities[:, 0]
+        elements['scale_0'] = scales[:, 0]
+        elements['scale_1'] = scales[:, 1]
+        elements['scale_2'] = scales[:, 2]
+        elements['rot_0'] = quats[:, 0]
+        elements['rot_1'] = quats[:, 1]
+        elements['rot_2'] = quats[:, 2]
+        elements['rot_3'] = quats[:, 3]
 
-        el = PlyElement.describe(elements, "vertex")
+        el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
-
 
 if __name__ == "__main__":
     REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    DATA_PATH = "captures/gt"
-    OUTPUT_PATH = "captures/splats_trained/scene.ply"
+    DATA_PATH = os.path.join(REPO_ROOT, "captures/gt")
+    OUTPUT_PATH = os.path.join(REPO_ROOT, "captures/splats_trained/scene.ply")
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 
-    scene = SceneDataset(os.path.join(REPO_ROOT, DATA_PATH), device="cuda", max_init_points=300_000, stride=8)
-    trainer = SimpleTrainer(scene)
-    trainer.train(iterations=2000)
-    trainer.save_ply(OUTPUT_PATH)
+    scene = SceneDataset(DATA_PATH)
+    trainer = AdvancedTrainer(scene)
+    trainer.train(iterations=15000) # Recommend 7k (quick) to 15k (high quality ~10min)
+    trainer.save_ply(REPO_ROOT)
