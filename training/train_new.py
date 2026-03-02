@@ -153,19 +153,18 @@ class AdvancedTrainer:
                 torch.sigmoid(self._opacities).squeeze(-1),
                 torch.sigmoid(self._colors),
                 viewmats, Ks, cam['width'], cam['height'],
-                sh_degree=None
+                sh_degree=None,
+                #Ensures info['radii'] matches the full point count
+                packed=False
             )
 
             # IMPORTANT: Retain gradients of 2D means for densification
             if "means2d" in info:
                 info["means2d"].retain_grad()
 
-            # 3. Loss
             loss = F.l1_loss(render_colors[0], gt_image)
             loss.backward()
 
-            # 4. Accumulate Gradients for Densification
-            # Inside the train loop, under "4. Accumulate Gradients"
             with torch.no_grad():
                 if "means2d" in info and info["means2d"].grad is not None:
                     grads = info["means2d"].grad
