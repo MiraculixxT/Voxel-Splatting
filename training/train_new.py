@@ -168,16 +168,32 @@ class AdvancedTrainer:
             with torch.no_grad():
                 if "means2d" in info and info["means2d"].grad is not None:
                     grads = info["means2d"].grad
+                    radii = info.get("radii")
+
+                    # gsplat may return batch-shaped outputs; normalize to 1D per-point arrays.
+                    if grads is not None and grads.ndim == 3 and grads.shape[0] == 1:
+                        grads = grads[0]
+                    if radii is not None and radii.ndim == 2 and radii.shape[0] == 1:
+                        radii = radii[0]
+
                     grad_norm = grads.norm(dim=-1)
-                    visible = info["radii"] > 0
+                    if radii is not None and radii.ndim != 1:
+                        radii = radii.reshape(-1)
+                    if grad_norm.ndim != 1:
+                        grad_norm = grad_norm.reshape(-1)
 
-                    # SAFETY CHECK:
-                    if visible.shape[0] != self.xyz_gradient_accum.shape[0]:
-                        print(f"Shape mismatch! Mask: {visible.shape[0]}, Accum: {self.xyz_gradient_accum.shape[0]}")
-                        continue # Skip this frame to prevent crash
+                    if radii is not None:
+                        visible = radii > 0
 
-                    self.xyz_gradient_accum[visible] += grad_norm[visible]
-                    self.denom[visible] += 1
+                        # SAFETY CHECK:
+                        if visible.shape[0] != self.xyz_gradient_accum.shape[0]:
+                            print(
+                                f"Shape mismatch! Mask: {visible.shape[0]}, Accum: {self.xyz_gradient_accum.shape[0]}"
+                            )
+                            continue # Skip this frame to prevent crash
+
+                        self.xyz_gradient_accum[visible] += grad_norm[visible]
+                        self.denom[visible] += 1
 
             self.optimizer.step()
             self.optimizer.zero_grad()
