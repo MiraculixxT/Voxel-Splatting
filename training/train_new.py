@@ -120,8 +120,9 @@ class AdvancedTrainer:
         self.setup_optimizer()
 
         # Gradient accumulation for densification
-        self.xyz_gradient_accum = torch.zeros(self._means.shape[0], device=self.device)
-        self.denom = torch.zeros(self._means.shape[0], device=self.device)
+        num_pts = dataset.init_points.shape[0]
+        self.xyz_gradient_accum = torch.zeros(num_pts, device=self.device)
+        self.denom = torch.zeros(num_pts, device=self.device)
 
     def setup_optimizer(self):
         self.optimizer = torch.optim.Adam([
@@ -164,14 +165,18 @@ class AdvancedTrainer:
             loss.backward()
 
             # 4. Accumulate Gradients for Densification
+            # Inside the train loop, under "4. Accumulate Gradients"
             with torch.no_grad():
                 if "means2d" in info and info["means2d"].grad is not None:
                     grads = info["means2d"].grad
-                    # Norm of the gradient in 2D screen space
                     grad_norm = grads.norm(dim=-1)
-                    # Only map gradients to visible points
                     visible = info["radii"] > 0
-                    # Expand accumulators if needed (handled in densification, but here we just add)
+
+                    # SAFETY CHECK:
+                    if visible.shape[0] != self.xyz_gradient_accum.shape[0]:
+                        print(f"Shape mismatch! Mask: {visible.shape[0]}, Accum: {self.xyz_gradient_accum.shape[0]}")
+                        continue # Skip this frame to prevent crash
+
                     self.xyz_gradient_accum[visible] += grad_norm[visible]
                     self.denom[visible] += 1
 
@@ -193,25 +198,18 @@ class AdvancedTrainer:
                 pbar.set_description(f"Loss: {loss.item():.4f} | Pts: {self._means.shape[0]}")
 
     def replace_param(self, old_param, new_tensor, name):
-        """Helper to replace parameters in optimizer state"""
-        # Create new parameter
         new_param = torch.nn.Parameter(new_tensor.requires_grad_(True))
 
-        # Find param group
         for group in self.optimizer.param_groups:
             if group["name"] == name:
-                # Replace in group
-                group["params"][0] = new_param
-                # Copy old optimizer state (momentum, etc) if shape matches, else init new
-                state = self.optimizer.state[old_param]
-                new_state = {}
-                if state:
-                    # If shape changed, we usually just reset state for robustness
-                    # or interpolation, but resetting is safer for densification
-                    pass
-                self.optimizer.state[new_param] = new_state
+                # Delete old state to prevent shape mismatches in Adam
+                if old_param in self.optimizer.state:
+                    del self.optimizer.state[old_param]
 
-                # Update class reference
+                group["params"][0] = new_param
+                # Initialize empty state for the new parameter
+                self.optimizer.state[new_param] = {}
+
                 if name == "means": self._means = new_param
                 elif name == "scales": self._scales = new_param
                 elif name == "quats": self._quats = new_param
