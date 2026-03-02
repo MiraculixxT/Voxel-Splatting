@@ -322,10 +322,12 @@ class AdvancedTrainer:
 if __name__ == "__main__":
     REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     DATA_PATH = os.path.join(REPO_ROOT, "captures/gt")
-    OUTPUT_PATH = os.path.join(REPO_ROOT, "captures/splats_trained/scene.ply")
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    OUTPUT_DIR = os.path.join(REPO_ROOT, "captures/splats_trained")
+    OUTPUT_FILE = os.path.join(OUTPUT_DIR, "scene.ply")
+    os.makedirs(os.path.dirname(OUTPUT_DIR), exist_ok=True)
 
     scene = SceneDataset(DATA_PATH)
     trainer = AdvancedTrainer(scene)
     trainer.train(iterations=15000) # Recommend 7k (quick) to 15k (high quality ~10min)
-    trainer.save_ply(REPO_ROOT)
+
+    trainer.save_ply(OUTPUT_FILE)
