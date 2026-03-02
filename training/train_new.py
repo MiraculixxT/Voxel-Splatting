@@ -37,7 +37,6 @@ class SceneDataset:
             base_name = meta_path.replace(".meta.txt", "")
             img_path = base_name + ".png"
             depth_path = base_name + ".depth.bin"
-
             if not os.path.exists(img_path) or not os.path.exists(depth_path):
                 continue
 
@@ -226,100 +225,57 @@ class AdvancedTrainer:
         grads[self.denom == 0] = 0.0
 
         # 1. IDENTIFY CANDIDATES
-        # High gradient means the Gaussian is struggling to fit the data
         is_grad_high = grads > grad_threshold
-
-        # 2. CLONE (Under-reconstructed areas: high grad, small scale)
         scales = torch.exp(self._scales)
         max_scales = torch.max(scales, dim=1).values
-        is_small = max_scales <= scene_scale_limit
-        should_clone = is_grad_high & is_small
 
-        # 3. SPLIT (Over-reconstructed areas: high grad, big scale)
-        is_big = max_scales > scene_scale_limit
-        should_split = is_grad_high & is_big
+        # Clone: Under-reconstructed (high grad, small scale)
+        should_clone = is_grad_high & (max_scales <= scene_scale_limit)
 
-        # 4. PRUNE (Transparent or Huge)
-        is_transparent = torch.sigmoid(self._opacities).squeeze() < OPACITY_THRESHOLD
-        is_huge = max_scales > (scene_scale_limit * 5.0) # Removing very large floaters
-        should_prune = is_transparent | is_huge
+        # Split: Over-reconstructed (high grad, big scale)
+        should_split = is_grad_high & (max_scales > scene_scale_limit)
 
-        # --- EXECUTE TOPOLOGY CHANGES ---
-
-        # Prepare new tensors
-        new_means = [self._means]
-        new_scales = [self._scales]
-        new_quats = [self._quats]
-        new_opacities = [self._opacities]
-        new_colors = [self._colors]
-
+        # 2. PREPARE NEW POINTS
         # Handle Clone
-        if should_clone.any():
-            new_means.append(self._means[should_clone])
-            new_scales.append(self._scales[should_clone])
-            new_quats.append(self._quats[should_clone])
-            new_opacities.append(self._opacities[should_clone])
-            new_colors.append(self._colors[should_clone])
+        cloned_means = self._means[should_clone]
+        cloned_scales = self._scales[should_clone]
+        cloned_quats = self._quats[should_clone]
+        cloned_opacities = self._opacities[should_clone]
+        cloned_colors = self._colors[should_clone]
 
-        # Handle Split
-        if should_split.any():
-            # Split 1 Gaussian into 2
-            # Sample positions from the Gaussian distribution
-            stds = scales[should_split].repeat(2, 1)
-            means = self._means[should_split].repeat(2, 1)
-            samples = torch.randn_like(means) * stds + means
+        # Handle Split (1 into 2)
+        split_scales = torch.log(scales[should_split] / 1.6)
+        split_means_1 = self._means[should_split] + (torch.randn_like(self._means[should_split]) * scales[should_split])
+        split_means_2 = self._means[should_split] + (torch.randn_like(self._means[should_split]) * scales[should_split])
 
-            new_means.append(samples)
-            # Reduce scale of children (divide by 1.6)
-            new_scales.append(torch.log(scales[should_split].repeat(2, 1) / 1.6))
-            new_quats.append(self._quats[should_split].repeat(2, 1))
-            new_opacities.append(self._opacities[should_split].repeat(2, 1))
-            new_colors.append(self._colors[should_split].repeat(2, 1))
+        split_means = torch.cat([split_means_1, split_means_2], dim=0)
+        split_scales = torch.cat([split_scales, split_scales], dim=0)
+        split_quats = self._quats[should_split].repeat(2, 1)
+        split_opacities = self._opacities[should_split].repeat(2, 1)
+        split_colors = self._colors[should_split].repeat(2, 1)
 
-            # Mark original split parents for removal
-            should_prune = should_prune | should_split
-
-        # Apply changes
-        # Concatenate all new points
-        param_means = torch.cat(new_means)
-        param_scales = torch.cat(new_scales)
-        param_quats = torch.cat(new_quats)
-        param_opacities = torch.cat(new_opacities)
-        param_colors = torch.cat(new_colors)
-
-        # Filter out pruned points (negate mask)
-        # We need to build a mask for the TOTAL new set.
-        # The easiest way: keep everything, then prune.
-
-        # But `should_prune` corresponds to indices in the OLD set.
-        # We need to construct the keep mask carefully.
-
-        # Simplified approach:
-        # 1. Clone appends to end.
-        # 2. Split appends to end.
-        # 3. Prune removes from ORIGINAL set.
-
-        # Re-assemble:
-        # kept_original = original[~should_prune]
-        # clones = original[should_clone]
-        # splits = generated_splits
-
+        # 3. PRUNE (Transparent, Huge, or the original Split Parents)
+        is_transparent = torch.sigmoid(self._opacities).squeeze() < OPACITY_THRESHOLD
+        is_huge = max_scales > (scene_scale_limit * 5.0)
+        should_prune = is_transparent | is_huge | should_split
         keep_mask = ~should_prune
 
-        final_means = torch.cat([self._means[keep_mask], *new_means[1:]])
-        final_scales = torch.cat([self._scales[keep_mask], *new_scales[1:]])
-        final_quats = torch.cat([self._quats[keep_mask], *new_quats[1:]])
-        final_opacities = torch.cat([self._opacities[keep_mask], *new_opacities[1:]])
-        final_colors = torch.cat([self._colors[keep_mask], *new_colors[1:]])
+        # 4. CONCATENATE EVERYTHING
+        final_means = torch.cat([self._means[keep_mask], cloned_means, split_means], dim=0)
+        final_scales = torch.cat([self._scales[keep_mask], cloned_scales, split_scales], dim=0)
+        final_quats = torch.cat([self._quats[keep_mask], cloned_quats, split_quats], dim=0)
+        final_opacities = torch.cat([self._opacities[keep_mask], cloned_opacities, split_opacities], dim=0)
+        final_colors = torch.cat([self._colors[keep_mask], cloned_colors, split_colors], dim=0)
 
-        # Update Optimizer Parameters
+        # 5. UPDATE PARAMETERS AND RESET ACCUMULATORS
+        # We must reset these BEFORE the next training step to avoid shape mismatch
         self.replace_param(self._means, final_means, "means")
         self.replace_param(self._scales, final_scales, "scales")
         self.replace_param(self._quats, final_quats, "quats")
         self.replace_param(self._opacities, final_opacities, "opacities")
         self.replace_param(self._colors, final_colors, "colors")
 
-        # Clear Accumulators for new points
+        # Create fresh accumulators matching the NEW point count
         self.xyz_gradient_accum = torch.zeros(final_means.shape[0], device=self.device)
         self.denom = torch.zeros(final_means.shape[0], device=self.device)
 
