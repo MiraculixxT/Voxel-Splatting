@@ -18,9 +18,12 @@ PRUNE_INTERVAL = 100
 OPACITY_RESET_INTERVAL = 3000
 
 # Thresholds
-GRAD_THRESHOLD = 0.0002       # Sensitivity to high-error areas (lower = more points)
-SCALE_THRESHOLD = 0.05        # If a splat is bigger than this, split it
-OPACITY_THRESHOLD = 0.005     # Prune invisible points
+#GRAD_THRESHOLD = 0.0002       # Sensitivity to high-error areas (lower = more points)
+#SCALE_THRESHOLD = 0.05        # If a splat is bigger than this, split it
+#OPACITY_THRESHOLD = 0.005     # Prune invisible points
+GRAD_THRESHOLD = 0.001
+SCALE_THRESHOLD = 0.01
+OPACITY_THRESHOLD = 0.01
 
 class SceneDataset:
     def __init__(self, data_dir, device="cuda"):
@@ -94,6 +97,7 @@ class SceneDataset:
 
             self.cameras.append({
                 "viewmat": view_mat.to(device),
+                "c2w": c2w.to(device),   # <-- NEU
                 "K": K,
                 "width": w, "height": h
             })
@@ -101,6 +105,29 @@ class SceneDataset:
         self.init_points = torch.cat(self.point_cloud, dim=0)
         self.init_colors = torch.cat(self.colors, dim=0)
         print(f"Initialized with {self.init_points.shape[0]} points.")
+
+        # --- NORMALIZE SCENE (for huge worlds) ---
+        with torch.no_grad():
+            center = self.init_points.mean(dim=0)
+            self.init_points = self.init_points - center
+
+            # robust radius
+            radius = torch.quantile(self.init_points.norm(dim=1), 0.95).clamp(min=1e-6)
+            self.init_points = self.init_points / radius
+
+            # apply same transform to camera translations (c2w)
+            for cam in self.cameras:
+                c2w = cam["c2w"]
+                c2w = c2w.clone()
+                c2w[:3, 3] = (c2w[:3, 3] - center) / radius
+
+                cam["c2w"] = c2w
+                cam["viewmat"] = torch.inverse(c2w)  # keep viewmat consistent
+
+            self.scene_center = center
+            self.scene_radius = radius
+
+        print(f"Scene normalized: radius(p95)={self.scene_radius.item():.4f}")
 
 
 class AdvancedTrainer:
@@ -113,8 +140,12 @@ class AdvancedTrainer:
         self._scales = torch.nn.Parameter(torch.log(torch.ones(len(dataset.init_points), 3, device=self.device) * 0.01).requires_grad_(True))
         self._quats = torch.nn.Parameter(torch.zeros(len(dataset.init_points), 4, device=self.device).requires_grad_(True))
         self._quats.data[:, 0] = 1.0
-        self._opacities = torch.nn.Parameter(torch.zeros(len(dataset.init_points), 1, device=self.device).requires_grad_(True))
-        self._colors = torch.nn.Parameter(torch.logit(dataset.init_colors).requires_grad_(True))
+        # start mostly transparent: sigmoid(-4) ~ 0.018
+        self._opacities = torch.nn.Parameter(torch.ones(len(dataset.init_points), 1, device=self.device) * -4.0)
+        self._opacities.requires_grad_(True)
+        eps = 1e-6
+        init_cols = dataset.init_colors.clamp(eps, 1 - eps)
+        self._colors = torch.nn.Parameter(torch.logit(init_cols).requires_grad_(True))
 
         # Optimizer setup
         self.setup_optimizer()
@@ -206,7 +237,7 @@ class AdvancedTrainer:
                 if i % OPACITY_RESET_INTERVAL == 0:
                     # Reset opacities to allow re-learning
                     print("Resetting opacities...")
-                    new_opacities = torch.min(self._opacities.data, torch.zeros_like(self._opacities)* -1.0) # Reset to ~0.1
+                    new_opacities = torch.full_like(self._opacities.data, -4.0)  # ~0.02 opacity
                     self.replace_param(self._opacities, new_opacities, "opacities")
 
             if i % 100 == 0:
@@ -258,8 +289,9 @@ class AdvancedTrainer:
 
         # Handle Split (1 into 2)
         split_scales = torch.log(scales[should_split] / 1.6)
-        split_means_1 = self._means[should_split] + (torch.randn_like(self._means[should_split]) * scales[should_split])
-        split_means_2 = self._means[should_split] + (torch.randn_like(self._means[should_split]) * scales[should_split])
+        jitter = scales[should_split] * 0.25
+        split_means_1 = self._means[should_split] + torch.randn_like(self._means[should_split]) * jitter
+        split_means_2 = self._means[should_split] + torch.randn_like(self._means[should_split]) * jitter
 
         split_means = torch.cat([split_means_1, split_means_2], dim=0)
         split_scales = torch.cat([split_scales, split_scales], dim=0)
