@@ -203,7 +203,7 @@ namespace {
 
         for (auto [cx, column] : chunks) {
             for (auto& [cy, chunk] : column) {
-                const auto& splats = chunk->GetSplats();
+                const auto& splats = chunk.GetSplats();
                 DumpChunkSplatsBinary(folder, cx, cy, splats);
                 manifest << "chunk " << cx << " " << cy << " splats " << splats.size() << "\n";
                 totalSplats += splats.size();
@@ -398,9 +398,9 @@ void GLWorldRenderer::Init() {
     if (m_Settings.GLGeometry) {
         for (auto [cx, column] : m_World.getChunks()) {
             for (auto& [cy, chunk] : column) {
-                chunk->BuildMesh(m_World);
+                chunk.BuildMesh(m_World);
                 //chunk->BuildSplats(m_World);
-                m_ChunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+                m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
                 //m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
             }
         }
