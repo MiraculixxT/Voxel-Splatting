@@ -1,6 +1,6 @@
 #version 410 core
 
-in vec2 TexCoord;
+in vec2 TexCoords;
 out vec4 FragColor;
 
 uniform sampler2D numberAtlas; // atlas with digits 0-9 laid out horizontally
@@ -8,12 +8,13 @@ uniform int digit;             // 0..9
 
 void main()
 {
+
     // Atlas is 10 digits wide horizontally, no padding
     float uPerDigit = 1.0 / 10.0;
     float u0 = clamp(float(digit), 0.0, 9.0) * uPerDigit;
 
-    float u = u0 + TexCoord.x * uPerDigit;
-    float v = TexCoord.y;
+    float u = u0 + TexCoords.x * uPerDigit;
+    float v = TexCoords.y;
 
     vec4 sampleColor = texture(numberAtlas, vec2(u, v));
 
@@ -24,5 +25,5 @@ void main()
         discard; // background
 
     // Tint digits to bright yellow so they pop over the bar
-    FragColor = vec4(1.0, 1.0, 0.2, 1.0);
+    FragColor = vec4(1.0, 1.0, 1.0, 1.0);
 }
