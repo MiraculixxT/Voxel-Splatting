@@ -16,6 +16,7 @@ void BlockDatabase::Init() {
     // 7 = log_side.png
     // 8 = log_top.png
     // 9 = leave.png
+    // 10 = short_grass.png
 
     m_BlockTextures[BlockType::Stone] = {0, 0, 0}; // Top, Bottom, Side
     m_BlockTextures[BlockType::Dirt]  = {1, 1, 1};
@@ -37,6 +38,14 @@ float BlockDatabase::GetTextureLayer(BlockType type, BlockFace face) {
         case BlockFace::Top:    return (float)it->second.top;
         case BlockFace::Bottom: return (float)it->second.bottom;
         case BlockFace::Side:   return (float)it->second.side;
+    }
+    return 0.0f;
+}
+
+float BlockDatabase::GetOverlayTextureLayer(OverlayTexture overlay) {
+    switch (overlay) {
+        case OverlayTexture::ShortGrass:
+            return 10.0f;
     }
     return 0.0f;
 }

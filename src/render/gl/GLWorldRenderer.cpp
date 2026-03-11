@@ -284,6 +284,7 @@ namespace {
 GLWorldRenderer::~GLWorldRenderer() {
     g_gt.destroy();
     delete m_BlockShader;
+    delete m_GrassShader;
     delete m_ChunkRenderer;
     delete m_SplatRenderer;
     delete m_ShadowShader;
@@ -300,6 +301,7 @@ GLWorldRenderer::~GLWorldRenderer() {
 void GLWorldRenderer::Init() {
     // Setup shader
     m_BlockShader = new GLShader("assets/shaders/block.vsh", "assets/shaders/block.fsh");
+    m_GrassShader = new GLShader("assets/shaders/grass.vsh", "assets/shaders/grass.fsh");
 
     // Setup shadow depth shader
     m_ShadowShader = new GLShader("assets/shaders/shadow_depth.vsh",
@@ -362,12 +364,16 @@ void GLWorldRenderer::Init() {
         "assets/textures/water.png",   // i 6
         "assets/textures/log_side.png",   // i 7
         "assets/textures/log_top.png",   // i 8
-        "assets/textures/leave.png"   // i 9
+        "assets/textures/leave.png",   // i 9
+        "assets/textures/short_grass.png"   // i 10
     };
     m_TextureArray = GLTextureUtils::LoadTexture2DArray(textureFiles);
 
     m_BlockShader->use();
     m_BlockShader->setInt("textureArray", 0);
+
+    m_GrassShader->use();
+    m_GrassShader->setInt("textureArray", 0);
 
     // Initialize sun direction
     m_SunDir = glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f));
@@ -401,6 +407,7 @@ void GLWorldRenderer::Init() {
                 chunk.BuildMesh(m_World);
                 //chunk->BuildSplats(m_World);
                 m_ChunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+                m_ChunkRenderer->UploadGrassMesh(cx, cy, chunk.GetGrassVertices());
                 //m_SplatRenderer->UploadSplats(cx, cy, chunk->GetSplats());
             }
         }
@@ -616,6 +623,31 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     const int fromZ = (center.y - renderDistance) / CHUNK_WIDTH - 1;
     const int toZ   = (center.y + renderDistance) / CHUNK_WIDTH;
     if (m_Settings.GLGeometry) m_ChunkRenderer->Render(frustum, fromX, toX, fromZ, toZ);
+
+    // Grass overlay pass: render after the opaque blocks
+    if (m_Settings.GLGeometry && m_GrassShader) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glDisable(GL_CULL_FACE);
+
+        m_GrassShader->use();
+        m_GrassShader->setMat4("projection", projection);
+        m_GrassShader->setMat4("view", view);
+        constexpr auto grassModel = glm::mat4(1.0f);
+        m_GrassShader->setMat4("model", grassModel);
+        m_GrassShader->setVec3("cameraPosition", m_Camera.Position);
+        m_GrassShader->setFloat("fogStart", m_Settings.GLTo * m_Settings.FogStartMult);
+        m_GrassShader->setFloat("fogEnd", m_Settings.GLTo * m_Settings.FogEndMult);
+        m_GrassShader->setFloat("time", static_cast<float>(glfwGetTime()));
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, m_TextureArray);
+
+        m_ChunkRenderer->RenderGrass(frustum, fromX, toX, fromZ, toZ);
+
+        glEnable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+    }
 
     // Render Gaussian splats using the same view-projection and lighting/shadow data
     if (m_SplatRenderer) {

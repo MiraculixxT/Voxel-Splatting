@@ -65,6 +65,7 @@ void GUIRenderer::RenderSettingsScreen(
             for (auto& [cy, chunk] : column) {
                 chunk.BuildMesh(world);
                 chunkRenderer->UploadMesh(cx, cy, chunk.GetMeshVertices());
+                chunkRenderer->UploadGrassMesh(cx, cy, chunk.GetGrassVertices());
                 //printf("DEBUG: Re-built chunk (%d, %d) with %d vertices\n", cx, cy, chunk.GetVertexCount());
             }
         }

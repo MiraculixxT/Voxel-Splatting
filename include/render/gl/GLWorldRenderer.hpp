@@ -34,6 +34,7 @@ private:
     glm::mat4 m_LightViewProj;
 
     GLShader* m_BlockShader = nullptr;
+    GLShader* m_GrassShader = nullptr;
     unsigned int m_TextureArray = 0;
 
     // Sky rendering

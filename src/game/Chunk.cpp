@@ -1,5 +1,6 @@
 #include "game/Chunk.hpp"
 #include <iostream>
+#include <cmath>
 
 #include "game/World.hpp"
 #include "glm/gtc/noise.hpp"
@@ -245,10 +246,53 @@ void Chunk::AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p
     m_MeshVertices.push_back(uv4.x); m_MeshVertices.push_back(uv4.y); m_MeshVertices.push_back(textureLayer);
 }
 
+void Chunk::AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
+                         float textureLayer,
+                         const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4) {
+    // Same vertex format as the main mesh for simplicity
+    m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
+    m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p2.x); m_GrassVertices.push_back(p2.y); m_GrassVertices.push_back(p2.z);
+    m_GrassVertices.push_back(uv2.x); m_GrassVertices.push_back(uv2.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
+    m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
+    m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
+    m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p4.x); m_GrassVertices.push_back(p4.y); m_GrassVertices.push_back(p4.z);
+    m_GrassVertices.push_back(uv4.x); m_GrassVertices.push_back(uv4.y); m_GrassVertices.push_back(textureLayer);
+}
+
+inline uint32_t Squirrel3(int x, int y, int z, int cx, int cz) {
+    // Combine your inputs into one seed first
+    // Using different large primes for each dimension
+    uint32_t n = (uint32_t)x;
+    n = n * 1610612741 + (uint32_t)y;
+    n = n * 1610612741 + (uint32_t)z;
+    n = n * 1610612741 + (uint32_t)cx;
+    n = n * 1610612741 + (uint32_t)cz;
+
+    // The core Squirrel3 bit-shredder
+    n *= 0xB5297A4D;
+    n ^= (n >> 8);
+    n += 0x68E31DA4;
+    n ^= (n << 8);
+    n *= 0x1B56C4E9;
+    n ^= (n >> 8);
+
+    return n;
+}
 
 void Chunk::BuildMesh(World &world) {
     m_MeshVertices.clear();
     m_VertexCount = 0;
+    m_GrassVertices.clear();
 
     // Standard UV coords for a full quad
     const glm::vec2 uv1(0.0f, 0.0f);
@@ -297,6 +341,40 @@ void Chunk::BuildMesh(World &world) {
                             {wx + 1, fy + 1, wz + 1},
                             {wx + 1, fy + 1, wz},
                             layer, uv1, uv4, uv3, uv2);
+
+                    if (currentType == BlockType::Grass) {
+                        const int hash = Squirrel3(x, y, z, cx, cz);
+                        if ((hash & 3) == 0) {
+                            const float grassLayer = BlockDatabase::GetOverlayTextureLayer(OverlayTexture::ShortGrass);
+                            const float yOffset = 1.01f;
+                            const float bladeHeight = 0.35f + (hash & 7) * 0.2f;
+                            const float bladeWidth = 0.70f + ((hash >> 3) & 7) * 0.045f;
+                            const float jitterX = (((hash >> 6) & 15) / 15.0f - 0.5f) * 0.35f;
+                            const float jitterZ = (((hash >> 10) & 15) / 15.0f - 0.5f) * 0.35f;
+                            const float centerX = wx + 0.5f + jitterX;
+                            const float centerZ = wz + 0.5f + jitterZ;
+                            const float halfW = bladeWidth * 0.5f;
+
+                            const float angle = (hash & 1023) * (6.2831853f / 1023.0f);
+                            const float c = std::cos(angle);
+                            const float s = std::sin(angle);
+                            const glm::vec2 dirX(c, s);
+                            const glm::vec2 dirZ(-s, c);
+
+                            // Two crossed quads centered on the block with randomized rotation
+                            AddGrassQuad({centerX - dirX.x * halfW, fy + yOffset, centerZ - dirX.y * halfW},
+                                         {centerX + dirX.x * halfW, fy + yOffset, centerZ + dirX.y * halfW},
+                                         {centerX + dirX.x * halfW, fy + yOffset + bladeHeight, centerZ + dirX.y * halfW},
+                                         {centerX - dirX.x * halfW, fy + yOffset + bladeHeight, centerZ - dirX.y * halfW},
+                                         grassLayer, uv1, uv2, uv3, uv4);
+
+                            AddGrassQuad({centerX - dirZ.x * halfW, fy + yOffset, centerZ - dirZ.y * halfW},
+                                         {centerX + dirZ.x * halfW, fy + yOffset, centerZ + dirZ.y * halfW},
+                                         {centerX + dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ + dirZ.y * halfW},
+                                         {centerX - dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ - dirZ.y * halfW},
+                                         grassLayer, uv1, uv2, uv3, uv4);
+                        }
+                    }
                 }
 
                 // Bottom Face (y-)

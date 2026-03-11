@@ -104,6 +104,7 @@ bool World::setBlock(const int wx, const int wy, const int wz, const BlockType b
     chunk->BuildMesh(*this);
     if (chunkRenderer) {
         chunkRenderer->UploadMesh(chunk->cx, chunk->cz, chunk->GetMeshVertices());
+        chunkRenderer->UploadGrassMesh(chunk->cx, chunk->cz, chunk->GetGrassVertices());
     }
     return true;
 }
@@ -227,6 +228,7 @@ void World::rebuildChunk(int cx, int cy) {
     }
     chunk->BuildMesh(*this);
     chunkRenderer->UploadMesh(cx, cy, chunk->GetMeshVertices());
+    chunkRenderer->UploadGrassMesh(cx, cy, chunk->GetGrassVertices());
 }
 
 void World::rebuildChunkAndNeighbors(int cx, int cy) {
