@@ -5,6 +5,7 @@ out vec4 FragColor;
 in vec3 TexCoord;
 in vec3 WorldPos;
 in vec4 LightSpacePos; // from vertex shader
+in float Variant;
 
 // Use a 2D Array Sampler
 uniform sampler2DArray textureArray;
@@ -74,6 +75,12 @@ void main() {
     if (layer == 9) {
         // Treat leaves as cutout-opaque to avoid fog/sky bleed on fringe pixels.
         texColor.a = 1.0;
+        // Subtle per-tree tint variation.
+        int variant = int(Variant + 0.5) % 3;
+        vec3 tint = (variant == 0) ? vec3(1.0, 1.0, 1.0)
+                   : (variant == 1) ? vec3(1.22, 1.02, 0.90) // warmer/brownish
+                                    : vec3(0.88, 1.24, 0.94); // lighter/birch-like
+        texColor.rgb *= tint;
     }
 
     // Compute geometric normal from world-space position (works for block faces)

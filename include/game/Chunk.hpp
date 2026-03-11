@@ -87,13 +87,13 @@ public:
 
     /**
      * @brief Gets the generated mesh vertices after BuildMesh() is called.
-     * Vertex format is (x, y, z, u, v, layer) - 6 floats.
+     * Vertex format is (x, y, z, u, v, layer, variant) - 7 floats.
      */
     const std::vector<float>& GetMeshVertices() const { return m_MeshVertices; }
 
     /**
      * @brief Gets the generated grass overlay vertices after BuildMesh() is called.
-     * Vertex format is (x, y, z, u, v, layer) - 6 floats.
+     * Vertex format is (x, y, z, u, v, layer, variant) - 7 floats.
      */
     const std::vector<float>& GetGrassVertices() const { return m_GrassVertices; }
 
@@ -108,6 +108,7 @@ private:
      */
     void AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
                  float textureLayer,
+                 uint8_t variant,
                  const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
 
     /**
@@ -115,6 +116,7 @@ private:
      */
     void AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
                       float textureLayer,
+                      uint8_t variant,
                       const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
 
     // 3D array of blocks [x][y][z]

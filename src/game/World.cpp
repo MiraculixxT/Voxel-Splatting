@@ -94,13 +94,17 @@ BlockState World::getBlock(const int wx, const int wy, const int wz) {
 }
 
 bool World::setBlock(const int wx, const int wy, const int wz, const BlockType block) {
+    return setBlock(wx, wy, wz, BlockState::getBasic(block));
+}
+
+bool World::setBlock(const int wx, const int wy, const int wz, const BlockState block) {
     const auto [bx, by, bz, chunk] = getBlockInChunk(*this, wx, wy, wz);
     if (!chunk) {
         return false;
     }
 
     // Apply block change
-    chunk->SetBlock(bx, by, bz, BlockState::getBasic(block));
+    chunk->SetBlock(bx, by, bz, block);
 
     // Update this chunk
     chunk->BuildMesh(*this);

@@ -19,11 +19,13 @@ enum class BlockType : uint8_t {
 
 struct BlockState {
     BlockType type;
+    uint8_t variant;
 
-    BlockState() : type(BlockType::Air) {}
-    explicit BlockState(const BlockType type): type(type) {}
+    BlockState() : type(BlockType::Air), variant(0) {}
+    explicit BlockState(const BlockType type, uint8_t variant = 0): type(type), variant(variant) {}
 
-    static BlockState getBasic(const BlockType type) { return BlockState(type); }
+    static BlockState getBasic(const BlockType type) { return BlockState(type, 0); }
+    static BlockState getWithVariant(const BlockType type, uint8_t variant) { return BlockState(type, variant); }
 };
 
 // Enum to identify which face of a block we're talking about

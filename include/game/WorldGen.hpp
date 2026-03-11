@@ -16,6 +16,7 @@ struct Tree {
     int height;
     int trunkType; // BlockType::Wood
     int leafType;  // BlockType::Leaves
+    uint8_t leafVariant;
 };
 
 struct TerrainNoise {

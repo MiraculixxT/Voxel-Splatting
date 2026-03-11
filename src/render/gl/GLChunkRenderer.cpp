@@ -43,7 +43,7 @@ void GLChunkRenderer::UploadMesh(int x, int y, const std::vector<float>& vertice
     }
 
     // Cast to int to match vertexCount type, std::vector::size() returns size_t
-    mesh.vertexCount = static_cast<int>(vertices.size()) / 6; // 6 floats per vertex (x,y,z,u,v,layer)
+    mesh.vertexCount = static_cast<int>(vertices.size()) / 7; // 7 floats per vertex (x,y,z,u,v,layer,variant)
 
     glBindVertexArray(mesh.VAO);
 
@@ -52,7 +52,7 @@ void GLChunkRenderer::UploadMesh(int x, int y, const std::vector<float>& vertice
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
     // Vertex attribute layout (same as before):
-    int stride = 6 * sizeof(float);
+    int stride = 7 * sizeof(float);
     // position (vec3) - location 0
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
     glEnableVertexAttribArray(0);
@@ -62,6 +62,9 @@ void GLChunkRenderer::UploadMesh(int x, int y, const std::vector<float>& vertice
     // texture layer (float) - location 2
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void*)(5 * sizeof(float)));
     glEnableVertexAttribArray(2);
+    // variant (float) - location 3
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(3);
 
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -85,7 +88,7 @@ void GLChunkRenderer::UploadGrassMesh(int x, int y, const std::vector<float>& ve
         return;
     }
 
-    mesh.vertexCount = static_cast<int>(vertices.size()) / 6; // 6 floats per vertex (x,y,z,u,v,layer)
+    mesh.vertexCount = static_cast<int>(vertices.size()) / 7; // 7 floats per vertex (x,y,z,u,v,layer,variant)
 
     glBindVertexArray(mesh.VAO);
 
@@ -94,7 +97,7 @@ void GLChunkRenderer::UploadGrassMesh(int x, int y, const std::vector<float>& ve
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
     // Vertex attribute layout (same as before):
-    int stride = 6 * sizeof(float);
+    int stride = 7 * sizeof(float);
     // position (vec3) - location 0
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
     glEnableVertexAttribArray(0);
@@ -104,6 +107,9 @@ void GLChunkRenderer::UploadGrassMesh(int x, int y, const std::vector<float>& ve
     // texture layer (float) - location 2
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, stride, (void*)(5 * sizeof(float)));
     glEnableVertexAttribArray(2);
+    // variant (float) - location 3
+    glVertexAttribPointer(3, 1, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(3);
 
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);

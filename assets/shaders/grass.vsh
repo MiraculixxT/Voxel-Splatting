@@ -2,6 +2,7 @@
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 layout (location = 2) in float aTexLayer;
+layout (location = 3) in float aVariant;
 
 out vec3 TexCoord;
 out vec3 WorldPos;

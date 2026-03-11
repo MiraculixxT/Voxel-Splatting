@@ -71,6 +71,8 @@ for (int x = 0; x < CHUNK_WIDTH; ++x) {
 
             float gx = static_cast<float>(x + cx * CHUNK_WIDTH);
             float gz = static_cast<float>(z + cz * CHUNK_WIDTH);
+            const int gxInt = static_cast<int>(gx);
+            const int gzInt = static_cast<int>(gz);
 
             // 1. Warping (Keep this low for the target image look, we want predictable cliffs)
             float warp = noise.moisture.GetNoise(gx, gz) * 20.0f;
@@ -143,10 +145,11 @@ for (int x = 0; x < CHUNK_WIDTH; ++x) {
                             float density = noise.moisture.GetNoise(gx * 0.5f, gz * 0.5f); // low freq density
                             if (density > 0.0f) { // 50% of the world is forest
                                 // Pseudo-random chance
-                                const auto rnd = WorldGen::ChancePercentFromCoords(gx, gz);
+                                const auto rnd = WorldGen::ChancePercentFromCoords(gxInt, gzInt);
                                 if (rnd < 5) { // 5% chance per block
-                                    int treeH = 5 + (rnd % 4); // 5 to 8 blocks tall
-                                    treesToGen.push_back({x, y + 1, z, treeH, (int)BlockType::Wood, (int)BlockType::Leaves});
+                                    int treeH = 5 + static_cast<int>(rnd % 4); // 5 to 8 blocks tall
+                                    uint8_t leafVariant = static_cast<uint8_t>(rnd % 3);
+                                    treesToGen.push_back({x, y + 1, z, treeH, (int)BlockType::Wood, (int)BlockType::Leaves, leafVariant});
                                 }
                             }
                         }
@@ -182,7 +185,7 @@ void Chunk::GenerateTree(const Tree& tree) {
             const int wx = cx * CHUNK_WIDTH + lx;
             const int wy = ly;
             const int wz = cz * CHUNK_WIDTH + lz;
-            world->setBlock(wx, wy, wz, state.type);
+            world->setBlock(wx, wy, wz, state);
         }
     };
 
@@ -213,7 +216,7 @@ void Chunk::GenerateTree(const Tree& tree) {
                     // The second image has "noisy" leaves
                     if (((lx + ly + lz) % 7) != 0) {
                         if (GetBlock(lx, ly, lz).type == BlockType::Air) {
-                            placeBlock(lx, ly, lz, BlockState::getBasic((BlockType)tree.leafType));
+                            placeBlock(lx, ly, lz, BlockState::getWithVariant((BlockType)tree.leafType, tree.leafVariant));
                         }
                     }
                 }
@@ -243,57 +246,70 @@ void Chunk::SetBlock(int x, int y, int z, BlockState type) {
 
 // Helper to add vertex data for one face
 void Chunk::AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
-                    float textureLayer, // This is now a layer index
+                    float textureLayer,
+                    uint8_t variant,
                     const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4) {
 
-    // The vertex format is (x, y, z, u, v, layer) - 6 floats
+    // The vertex format is (x, y, z, u, v, layer, variant) - 7 floats
 
     // Tri 1
     m_MeshVertices.push_back(p1.x); m_MeshVertices.push_back(p1.y); m_MeshVertices.push_back(p1.z);
     m_MeshVertices.push_back(uv1.x); m_MeshVertices.push_back(uv1.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 
     m_MeshVertices.push_back(p2.x); m_MeshVertices.push_back(p2.y); m_MeshVertices.push_back(p2.z);
     m_MeshVertices.push_back(uv2.x); m_MeshVertices.push_back(uv2.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 
     m_MeshVertices.push_back(p3.x); m_MeshVertices.push_back(p3.y); m_MeshVertices.push_back(p3.z);
     m_MeshVertices.push_back(uv3.x); m_MeshVertices.push_back(uv3.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 
     // Tri 2
     m_MeshVertices.push_back(p1.x); m_MeshVertices.push_back(p1.y); m_MeshVertices.push_back(p1.z);
     m_MeshVertices.push_back(uv1.x); m_MeshVertices.push_back(uv1.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 
     m_MeshVertices.push_back(p3.x); m_MeshVertices.push_back(p3.y); m_MeshVertices.push_back(p3.z);
     m_MeshVertices.push_back(uv3.x); m_MeshVertices.push_back(uv3.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 
     m_MeshVertices.push_back(p4.x); m_MeshVertices.push_back(p4.y); m_MeshVertices.push_back(p4.z);
     m_MeshVertices.push_back(uv4.x); m_MeshVertices.push_back(uv4.y); m_MeshVertices.push_back(textureLayer);
+    m_MeshVertices.push_back(static_cast<float>(variant));
 }
 
 void Chunk::AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
                          float textureLayer,
+                         uint8_t variant,
                          const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4) {
     // Same vertex format as the main mesh for simplicity
     m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
     m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 
     m_GrassVertices.push_back(p2.x); m_GrassVertices.push_back(p2.y); m_GrassVertices.push_back(p2.z);
     m_GrassVertices.push_back(uv2.x); m_GrassVertices.push_back(uv2.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 
     m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
     m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 
     m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
     m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 
     m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
     m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 
     m_GrassVertices.push_back(p4.x); m_GrassVertices.push_back(p4.y); m_GrassVertices.push_back(p4.z);
     m_GrassVertices.push_back(uv4.x); m_GrassVertices.push_back(uv4.y); m_GrassVertices.push_back(textureLayer);
+    m_GrassVertices.push_back(static_cast<float>(variant));
 }
 
 inline uint32_t Squirrel3(int x, int y, int z, int cx, int cz) {
-    // Combine your inputs into one seed first
     // Using different large primes for each dimension
     uint32_t n = (uint32_t)x;
     n = n * 1610612741 + (uint32_t)y;
@@ -360,10 +376,10 @@ void Chunk::BuildMesh(World &world) {
                 auto EmitFace = [&](const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
                                     float textureLayer,
                                     const glm::vec2& tuv1, const glm::vec2& tuv2, const glm::vec2& tuv3, const glm::vec2& tuv4) {
-                    AddFace(p1, p2, p3, p4, textureLayer, tuv1, tuv2, tuv3, tuv4);
+                    AddFace(p1, p2, p3, p4, textureLayer, currentBlock.variant, tuv1, tuv2, tuv3, tuv4);
                     if (currentType == BlockType::Leaves) {
                         // Reverse winding so backfaces render without changing global cull state.
-                        AddFace(p1, p4, p3, p2, textureLayer, tuv1, tuv4, tuv3, tuv2);
+                        AddFace(p1, p4, p3, p2, textureLayer, currentBlock.variant, tuv1, tuv4, tuv3, tuv2);
                     }
                 };
 
@@ -400,13 +416,13 @@ void Chunk::BuildMesh(World &world) {
                                          {centerX + dirX.x * halfW, fy + yOffset, centerZ + dirX.y * halfW},
                                          {centerX + dirX.x * halfW, fy + yOffset + bladeHeight, centerZ + dirX.y * halfW},
                                          {centerX - dirX.x * halfW, fy + yOffset + bladeHeight, centerZ - dirX.y * halfW},
-                                         grassLayer, uv1, uv2, uv3, uv4);
+                                         grassLayer, 0, uv1, uv2, uv3, uv4);
 
                             AddGrassQuad({centerX - dirZ.x * halfW, fy + yOffset, centerZ - dirZ.y * halfW},
                                          {centerX + dirZ.x * halfW, fy + yOffset, centerZ + dirZ.y * halfW},
                                          {centerX + dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ + dirZ.y * halfW},
                                          {centerX - dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ - dirZ.y * halfW},
-                                         grassLayer, uv1, uv2, uv3, uv4);
+                                         grassLayer, 0, uv1, uv2, uv3, uv4);
                         }
                     }
                 }
@@ -499,7 +515,7 @@ void Chunk::BuildMesh(World &world) {
         }
     }
 
-    m_VertexCount = m_MeshVertices.size() / 6;
+    m_VertexCount = m_MeshVertices.size() / 7;
 }
 
 

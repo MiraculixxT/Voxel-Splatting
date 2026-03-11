@@ -2,11 +2,13 @@
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 layout (location = 2) in float aTexLayer; // New vertex attribute
+layout (location = 3) in float aVariant;
 
 // Pass all 3 components to the fragment shader
 out vec3 TexCoord; // (u, v, layer)
 out vec3 WorldPos;
 out vec4 LightSpacePos; // Light-space position for shadow mapping
+out float Variant;
 
 uniform mat4 model;
 uniform mat4 view;
@@ -33,4 +35,5 @@ void main() {
     gl_Position = projection * view * worldPosition;
     // Pass (u, v, layer)
     TexCoord = vec3(aTexCoord, aTexLayer);
+    Variant = aVariant;
 }
