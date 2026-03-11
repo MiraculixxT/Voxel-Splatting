@@ -47,7 +47,9 @@ FetchContent_MakeAvailable(stb)
 # NOTE: You must generate and download GLAD from https://glad.dav1d.de/
 # Settings: C/C++, Core, OpenGL 4.1 (or higher)
 # Unzip it and place the 'include' and 'src' folders into a 'vendor/glad' directory
-add_library(glad STATIC vendor/glad/src/glad.c)
+add_library(glad STATIC vendor/glad/src/glad.c
+        include/render/gl/GLSplatRenderer.hpp
+        include/render/gl/GLShadowMap.hpp)
 target_include_directories(glad PUBLIC vendor/glad/include)
 
 # --- Include Directories ---
@@ -87,6 +89,8 @@ file(GLOB_RECURSE GAME_HEADERS CONFIGURE_DEPENDS "include/*.h" "include/*.hpp")
 add_executable(VoxelSplatting
         ${GAME_SOURCES}
         ${GAME_HEADERS}
+        src/render/gl/GLSplatRenderer.cpp
+        src/render/gl/GLShadowMap.cpp
 )
 target_include_directories(VoxelSplatting PRIVATE include)
 

@@ -33,6 +33,11 @@ enum class BlockFace {
     Side
 };
 
+// Texture layers that are not tied to a block type
+enum class OverlayTexture {
+    ShortGrass
+};
+
 /**
  * @struct BlockTextureInfo
  * @brief Stores the texture layer index for each face of a block.
@@ -63,6 +68,11 @@ public:
      * @return The integer index of the texture in the 2D texture array.
      */
     static float GetTextureLayer(BlockType type, BlockFace face);
+
+    /**
+     * @brief Gets a texture layer for overlay elements like grass blades.
+     */
+    static float GetOverlayTextureLayer(OverlayTexture overlay);
 
     /**
      * @brief Checks if a block type is transparent.

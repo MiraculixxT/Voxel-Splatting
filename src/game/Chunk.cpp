@@ -1,5 +1,6 @@
 #include "game/Chunk.hpp"
 #include <iostream>
+#include <cmath>
 
 #include "game/World.hpp"
 #include "glm/gtc/noise.hpp"
@@ -268,10 +269,53 @@ void Chunk::AddFace(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p
     m_MeshVertices.push_back(uv4.x); m_MeshVertices.push_back(uv4.y); m_MeshVertices.push_back(textureLayer);
 }
 
+void Chunk::AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
+                         float textureLayer,
+                         const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4) {
+    // Same vertex format as the main mesh for simplicity
+    m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
+    m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p2.x); m_GrassVertices.push_back(p2.y); m_GrassVertices.push_back(p2.z);
+    m_GrassVertices.push_back(uv2.x); m_GrassVertices.push_back(uv2.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
+    m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p1.x); m_GrassVertices.push_back(p1.y); m_GrassVertices.push_back(p1.z);
+    m_GrassVertices.push_back(uv1.x); m_GrassVertices.push_back(uv1.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p3.x); m_GrassVertices.push_back(p3.y); m_GrassVertices.push_back(p3.z);
+    m_GrassVertices.push_back(uv3.x); m_GrassVertices.push_back(uv3.y); m_GrassVertices.push_back(textureLayer);
+
+    m_GrassVertices.push_back(p4.x); m_GrassVertices.push_back(p4.y); m_GrassVertices.push_back(p4.z);
+    m_GrassVertices.push_back(uv4.x); m_GrassVertices.push_back(uv4.y); m_GrassVertices.push_back(textureLayer);
+}
+
+inline uint32_t Squirrel3(int x, int y, int z, int cx, int cz) {
+    // Combine your inputs into one seed first
+    // Using different large primes for each dimension
+    uint32_t n = (uint32_t)x;
+    n = n * 1610612741 + (uint32_t)y;
+    n = n * 1610612741 + (uint32_t)z;
+    n = n * 1610612741 + (uint32_t)cx;
+    n = n * 1610612741 + (uint32_t)cz;
+
+    // The core Squirrel3 bit-shredder
+    n *= 0xB5297A4D;
+    n ^= (n >> 8);
+    n += 0x68E31DA4;
+    n ^= (n << 8);
+    n *= 0x1B56C4E9;
+    n ^= (n >> 8);
+
+    return n;
+}
 
 void Chunk::BuildMesh(World &world) {
     m_MeshVertices.clear();
     m_VertexCount = 0;
+    m_GrassVertices.clear();
 
     // Standard UV coords for a full quad
     const glm::vec2 uv1(0.0f, 0.0f);
@@ -320,6 +364,40 @@ void Chunk::BuildMesh(World &world) {
                             {wx + 1, fy + 1, wz + 1},
                             {wx + 1, fy + 1, wz},
                             layer, uv1, uv4, uv3, uv2);
+
+                    if (currentType == BlockType::Grass) {
+                        const int hash = Squirrel3(x, y, z, cx, cz);
+                        if ((hash & 3) == 0) {
+                            const float grassLayer = BlockDatabase::GetOverlayTextureLayer(OverlayTexture::ShortGrass);
+                            const float yOffset = 1.01f;
+                            const float bladeHeight = 0.35f + (hash & 7) * 0.2f;
+                            const float bladeWidth = 0.70f + ((hash >> 3) & 7) * 0.045f;
+                            const float jitterX = (((hash >> 6) & 15) / 15.0f - 0.5f) * 0.35f;
+                            const float jitterZ = (((hash >> 10) & 15) / 15.0f - 0.5f) * 0.35f;
+                            const float centerX = wx + 0.5f + jitterX;
+                            const float centerZ = wz + 0.5f + jitterZ;
+                            const float halfW = bladeWidth * 0.5f;
+
+                            const float angle = (hash & 1023) * (6.2831853f / 1023.0f);
+                            const float c = std::cos(angle);
+                            const float s = std::sin(angle);
+                            const glm::vec2 dirX(c, s);
+                            const glm::vec2 dirZ(-s, c);
+
+                            // Two crossed quads centered on the block with randomized rotation
+                            AddGrassQuad({centerX - dirX.x * halfW, fy + yOffset, centerZ - dirX.y * halfW},
+                                         {centerX + dirX.x * halfW, fy + yOffset, centerZ + dirX.y * halfW},
+                                         {centerX + dirX.x * halfW, fy + yOffset + bladeHeight, centerZ + dirX.y * halfW},
+                                         {centerX - dirX.x * halfW, fy + yOffset + bladeHeight, centerZ - dirX.y * halfW},
+                                         grassLayer, uv1, uv2, uv3, uv4);
+
+                            AddGrassQuad({centerX - dirZ.x * halfW, fy + yOffset, centerZ - dirZ.y * halfW},
+                                         {centerX + dirZ.x * halfW, fy + yOffset, centerZ + dirZ.y * halfW},
+                                         {centerX + dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ + dirZ.y * halfW},
+                                         {centerX - dirZ.x * halfW, fy + yOffset + bladeHeight, centerZ - dirZ.y * halfW},
+                                         grassLayer, uv1, uv2, uv3, uv4);
+                        }
+                    }
                 }
 
                 // Bottom Face (y-)
@@ -411,4 +489,233 @@ void Chunk::BuildMesh(World &world) {
     }
 
     m_VertexCount = m_MeshVertices.size() / 6;
+}
+
+
+void Chunk::BuildSplats(World& world) {
+    m_Splats.clear();
+
+    const float worldOffsetX = static_cast<float>(cx * CHUNK_WIDTH);
+    const float worldOffsetZ = static_cast<float>(cz * CHUNK_WIDTH);
+
+    for (int x = 0; x < CHUNK_WIDTH; ++x) {
+        for (int y = 0; y < CHUNK_HEIGHT; ++y) {
+            for (int z = 0; z < CHUNK_WIDTH; ++z) {
+                BlockState currentBlock = m_Blocks[x][y][z];
+                BlockType currentType   = currentBlock.type;
+                if (currentType == BlockType::Air) continue;
+
+                // PERF: Water should only render its surface (avoid thousands of underwater splats)
+                if (currentType == BlockType::Water) {
+                    // Only emit the top face if the block above is NOT water (i.e. this is the surface)
+                    BlockState above = GetBlock(x, y + 1, z);
+                    if (BlockDatabase::IsTransparent(above) && above.type != BlockType::Water) {
+                        // We still need center, so compute it here and emit directly
+                        glm::vec3 waterCenter(
+                                static_cast<float>(x) + worldOffsetX + 0.5f,
+                                static_cast<float>(y) + 0.5f,
+                                static_cast<float>(z) + worldOffsetZ + 0.5f
+                        );
+
+                        // Local lambda copies the needed parts from emitFaceSplats but uses the existing one below
+                        // by temporarily assigning center.
+                        center = waterCenter;
+                        // Emit only the top surface
+                        // (emitFaceSplats is declared below; we jump to it by not continuing here)
+                    } else {
+                        continue; // underwater water block -> no splats at all
+                    }
+                }
+
+                // Block center in world space
+                glm::vec3 center;
+                center = glm::vec3(
+                        static_cast<float>(x) + worldOffsetX + 0.5f,
+                        static_cast<float>(y) + 0.5f,
+                        static_cast<float>(z) + worldOffsetZ + 0.5f
+                );
+
+                auto neighborIsTransparent = [&](const BlockState& n) {
+                    return BlockDatabase::IsTransparent(n);
+                };
+
+                // Helper: generates a 16x16 grid of splats on a face with a given normal
+                auto emitFaceSplats = [&](const glm::vec3& faceNormal, BlockFace blockFace) {
+                    // 0.5 from the center to the block surface, plus a small epsilon
+                    const float surfaceOffset = 0.51f;
+
+                    glm::vec3 n = glm::normalize(faceNormal);
+                    glm::vec3 tangent;
+                    glm::vec3 bitangent;
+
+                    // Tangent/Bitangent so wählen, dass sie zur Mesh-UV-Ausrichtung passen
+                    if (n.y > 0.5f) {
+                        // Top (y+): u = +x, v = +z
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 0.0f, 1.0f);
+                    } else if (n.y < -0.5f) {
+                        // Bottom (y-): gleiche Ausrichtung wie Top
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 0.0f, 1.0f);
+                    } else if (n.z > 0.5f) {
+                        // Front (z+): u = +x, v = +y
+                        tangent   = glm::vec3(1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else if (n.z < -0.5f) {
+                        // Back (z-): u = -x, v = +y (entspricht Mesh-Flip)
+                        tangent   = glm::vec3(-1.0f, 0.0f, 0.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else if (n.x > 0.5f) {
+                        // Right (x+): u = -z, v = +y
+                        tangent   = glm::vec3(0.0f, 0.0f, -1.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    } else { // n.x < -0.5f, Left (x-)
+                        // Left (x-): u = +z, v = +y
+                        tangent   = glm::vec3(0.0f, 0.0f, 1.0f);
+                        bitangent = glm::vec3(0.0f, 1.0f, 0.0f);
+                    }
+
+
+                    const int   GRID_RES  = 10;
+                    const float halfSize  = 0.5f;
+                    const float padding   = 1.0f;
+                    const float step      = (2.0f * halfSize * padding) / float(GRID_RES);
+
+                    const float sigmaWorld = 0.05f;
+                    glm::vec3   scale      = glm::vec3(sigmaWorld);
+
+                    glm::vec3 baseColor(1.0f);
+                    switch (currentType) {
+                        case BlockType::Grass:  baseColor = glm::vec3(0.3f, 0.8f, 0.3f); break;
+                        case BlockType::Dirt:   baseColor = glm::vec3(0.4f, 0.3f, 0.2f); break;
+                        case BlockType::Stone:  baseColor = glm::vec3(0.6f, 0.6f, 0.6f); break;
+                        case BlockType::Sand:   baseColor = glm::vec3(0.9f, 0.85f, 0.6f); break;
+                        case BlockType::Water:  baseColor = glm::vec3(0.2f, 0.4f, 0.8f); break;
+                        case BlockType::Leaves: baseColor = glm::vec3(0.4f, 0.9f, 0.4f); break;
+                        case BlockType::Wood:   baseColor = glm::vec3(0.5f, 0.3f, 0.15f); break;
+                        default: break;
+                    }
+
+                    for (int iy = 0; iy < GRID_RES; ++iy) {
+                        for (int ix = 0; ix < GRID_RES; ++ix) {
+                            // Grid in [-halfSize*padding, +halfSize*padding]
+                            float u = -halfSize * padding + (ix + 0.5f) * step;
+                            float v = -halfSize * padding + (iy + 0.5f) * step;
+
+                            glm::vec3 pos =
+                                    center +
+                                    n * surfaceOffset +
+                                    tangent   * u +
+                                    bitangent * v;
+
+                            Splat s;
+                            s.position = pos;
+                            s.scale    = scale;
+                            s.normal   = n;
+                            s.color    = baseColor;
+                            s.opacity  = 1.0f;
+
+                            float texU = (ix + 0.5f) / GRID_RES;
+                            float texV = (iy + 0.5f) / GRID_RES;
+                            s.uv    = glm::vec2(texU, texV);
+                            s.layer = BlockDatabase::GetTextureLayer(currentType, blockFace);
+
+                            m_Splats.push_back(s);
+                        }
+                    }
+                };
+
+                // y+ (top)
+                {
+                    BlockState up = GetBlock(x, y + 1, z);
+                    // For water: only surface (block above must not be water)
+                    if (currentType == BlockType::Water) {
+                        if (BlockDatabase::IsTransparent(up) && up.type != BlockType::Water) {
+                            emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                        }
+                    } else {
+                        if (neighborIsTransparent(up)) {
+                            emitFaceSplats(glm::vec3(0.0f, 1.0f, 0.0f), BlockFace::Top);
+                        }
+                    }
+                }
+                // Water: surface-only, skip bottom/sides entirely
+                if (currentType == BlockType::Water) {
+                    continue;
+                }
+                // y- (bottom)
+                if (neighborIsTransparent(GetBlock(x, y - 1, z))) {
+                    emitFaceSplats(glm::vec3(0.0f, -1.0f, 0.0f), BlockFace::Bottom);
+                }
+
+                // z+ (front)
+                {
+                    BlockState n;
+                    if (z + 1 >= CHUNK_WIDTH) {
+                        if (Chunk* c = world.getChunk(cx, cz + 1)) {
+                            n = c->GetBlock(x, y, 0);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x, y, z + 1);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(0.0f, 0.0f, 1.0f), BlockFace::Side);
+                    }
+                }
+
+                // z- (back)
+                {
+                    BlockState n;
+                    if (z - 1 < 0) {
+                        if (Chunk* c = world.getChunk(cx, cz - 1)) {
+                            n = c->GetBlock(x, y, CHUNK_WIDTH - 1);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x, y, z - 1);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(0.0f, 0.0f, -1.0f), BlockFace::Side);
+                    }
+                }
+
+                // x+ (right)
+                {
+                    BlockState n;
+                    if (x + 1 >= CHUNK_WIDTH) {
+                        if (Chunk* c = world.getChunk(cx + 1, cz)) {
+                            n = c->GetBlock(0, y, z);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x + 1, y, z);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(1.0f, 0.0f, 0.0f), BlockFace::Side);
+                    }
+                }
+
+                // x- (left)
+                {
+                    BlockState n;
+                    if (x - 1 < 0) {
+                        if (Chunk* c = world.getChunk(cx - 1, cz)) {
+                            n = c->GetBlock(CHUNK_WIDTH - 1, y, z);
+                        } else {
+                            n = BlockState(BlockType::Air);
+                        }
+                    } else {
+                        n = GetBlock(x - 1, y, z);
+                    }
+                    if (neighborIsTransparent(n)) {
+                        emitFaceSplats(glm::vec3(-1.0f, 0.0f, 0.0f), BlockFace::Side);
+                    }
+                }
+            }
+        }
+    }
 }

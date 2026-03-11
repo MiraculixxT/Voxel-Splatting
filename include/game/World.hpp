@@ -14,15 +14,16 @@
 #include "thread"
 #include "WorldGen.hpp"
 
+#include "render/gl/GLSplatRenderer.hpp"
+
 
 class World {
 public:
     explicit World(Settings& i_settings);
     ~World();
 
-    // map[x][y] -> shared_ptr<Chunk>
-    using ChunkPtr     = std::shared_ptr<Chunk>;
-    using ChunkColumn  = std::unordered_map<int, ChunkPtr>;
+    // map[x][y] -> Chunk
+    using ChunkColumn  = std::unordered_map<int, Chunk>;
     using ChunkStorage = std::unordered_map<int, ChunkColumn>;
 
     // construct chunk in-place from coords
@@ -53,35 +54,13 @@ public:
     void rebuildChunk(int cx, int cy);
     void rebuildChunkAndNeighbors(int cx, int cy);
 
-    // Async
-    void enqueueRebuildTask(int cx, int cy);
-    void uploadFinishedMeshes();
-    void meshWorker();
-
 private:
     ChunkStorage chunks;
-    mutable std::shared_mutex chunksMutex;
     Settings& settings;
     Player* player = nullptr;
 
     GLChunkRenderer* chunkRenderer = nullptr;
-
-    // Async meshing system
-    struct MeshTask {
-        int cx, cy;
-        ChunkPtr chunk;
-    };
-
-    std::queue<MeshTask> taskQueue;
-    std::queue<MeshTask> doneQueue;
-
-    std::mutex taskQueueMutex;
-    std::mutex doneQueueMutex;
-
-    std::condition_variable taskQueueCV;
-
-    std::thread meshThread;
-    std::atomic<bool> running = false;
+    GLSplatRenderer* splatRenderer = nullptr;
 
     TerrainNoise noise;
 };

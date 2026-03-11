@@ -4,6 +4,8 @@
 #include "game/Settings.hpp"
 #include "game/World.hpp"
 #include "render/core/Camera.hpp"
+#include "GLSplatRenderer.hpp"
+#include "GLShadowMap.hpp"
 
 class GLWorldRenderer {
 public:
@@ -14,14 +16,36 @@ public:
     void Init();
     void RenderWorld();
     GLChunkRenderer* GetChunkRenderer() const { return m_ChunkRenderer; }
+    GLSplatRenderer* GetSplatRenderer() const { return m_SplatRenderer; }
+
+    void RenderShadowPass();
 
 private:
     Camera& m_Camera;
     Settings& m_Settings;
     World& m_World;
     GLChunkRenderer* m_ChunkRenderer = nullptr;
+    GLSplatRenderer* m_SplatRenderer = nullptr;
+
+    // Shadow + Light
+    GLShadowMap m_ShadowMap;
+    GLShader* m_ShadowShader = nullptr;
+    glm::vec3 m_SunDir;          // Direction towards the sun in world space
+    glm::mat4 m_LightViewProj;
 
     GLShader* m_BlockShader = nullptr;
+    GLShader* m_GrassShader = nullptr;
     unsigned int m_TextureArray = 0;
 
+    // Sky rendering
+    GLShader* m_SkyShader = nullptr;
+    unsigned int m_SkyVAO = 0;
+
+    GLShader* m_SunFlareShader = nullptr;
+
+    // Godrays
+    GLShader* m_GodrayShader = nullptr;
+    GLuint m_GodrayOcclusionFBO = 0;
+    GLuint m_GodrayOcclusionTex = 0;
+    GLShader* m_GodrayOcclusionShader = nullptr;
 };

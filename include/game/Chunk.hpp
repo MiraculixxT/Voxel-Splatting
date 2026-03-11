@@ -13,6 +13,17 @@ constexpr int CHUNK_HEIGHT = 256;
 class World;
 struct TerrainNoise;
 
+struct Splat {
+    glm::vec3 position;  // world-space center
+    glm::vec3 scale;     // radii (sigma_x, sigma_y, sigma_z)
+    glm::vec3 normal;    // orientation of the splat plane
+    glm::vec3 color;     // albedo
+    float opacity;
+
+    glm::vec2 uv;     // texture coordinate
+    float     layer;  // texture layer in atlas
+};
+
 /**
  * @class Chunk
  * @brief Represents a vertical column of blocks in the world.
@@ -63,10 +74,28 @@ public:
     void BuildMesh(World& world);
 
     /**
+     * @brief Builds the chunk's Gaussian splat representation.
+     * Similar to BuildMesh, but generates splats for visible blocks.
+     * @param world The world object, used to query neighbor blocks.
+     */
+    void BuildSplats(World& world);
+
+    /**
+     * @brief Gets the generated splats after BuildSplats() is called.
+     */
+    const std::vector<Splat>& GetSplats() const { return m_Splats; }
+
+    /**
      * @brief Gets the generated mesh vertices after BuildMesh() is called.
      * Vertex format is (x, y, z, u, v, layer) - 6 floats.
      */
     const std::vector<float>& GetMeshVertices() const { return m_MeshVertices; }
+
+    /**
+     * @brief Gets the generated grass overlay vertices after BuildMesh() is called.
+     * Vertex format is (x, y, z, u, v, layer) - 6 floats.
+     */
+    const std::vector<float>& GetGrassVertices() const { return m_GrassVertices; }
 
     /**
      * @brief Gets the number of vertices in the current mesh.
@@ -81,10 +110,26 @@ private:
                  float textureLayer,
                  const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
 
+    /**
+     * @brief Helper to add a 6-vertex quad (2 triangles) to the grass overlay data.
+     */
+    void AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
+                      float textureLayer,
+                      const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
+
     // 3D array of blocks [x][y][z]
     BlockState m_Blocks[CHUNK_WIDTH][CHUNK_HEIGHT][CHUNK_WIDTH];
 
     // Render data
     std::vector<float> m_MeshVertices;
     int m_VertexCount;
+
+    // Grass overlay render data
+    std::vector<float> m_GrassVertices;
+
+    // Gaussian splat data for this chunk
+    std::vector<Splat> m_Splats;
+
+    glm::vec3 center;
 };
+

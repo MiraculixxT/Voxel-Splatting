@@ -28,6 +28,11 @@ public:
     void UploadMesh(int x, int y, const std::vector<float>& vertices);
 
     /**
+     * @brief Uploads grass overlay mesh data for a specific chunk coordinate.
+     */
+    void UploadGrassMesh(int x, int y, const std::vector<float>& vertices);
+
+    /**
      * @brief Removes the mesh data for a specific chunk coordinate.
      * @param x The chunk's x coordinate.
      * @param y The chunk's y coordinate.
@@ -45,13 +50,31 @@ public:
     void Render(const ViewFrustum &frustum, int fromX, int toX, int fromZ, int toZ);
 
     /**
+     * @brief Renders all loaded grass overlay meshes.
+     */
+    void RenderGrass(const ViewFrustum &frustum, int fromX, int toX, int fromZ, int toZ);
+
+    /**
      * @brief Gets the total number of vertices in all managed chunk meshes.
      */
     std::size_t GetTotalVertexCount() const;
 
+    void RenderAll(int fromX, int toX, int fromZ, int toZ);
+
+    /**
+     * @brief Renders all grass overlay meshes without frustum culling.
+     */
+    void RenderGrassAll(int fromX, int toX, int fromZ, int toZ);
+
 private:
     // Struct to hold OpenGL buffer info for a single chunk
     struct ChunkMesh {
+        GLuint VAO = 0;
+        GLuint VBO = 0;
+        int vertexCount = 0;
+    };
+
+    struct GrassMesh {
         GLuint VAO = 0;
         GLuint VBO = 0;
         int vertexCount = 0;
@@ -67,6 +90,7 @@ private:
 
     // Map to store meshes by coordinate
     std::unordered_map<ChunkCoord, ChunkMesh, ChunkCoordHash> m_ChunkMeshes;
+    std::unordered_map<ChunkCoord, GrassMesh, ChunkCoordHash> m_GrassMeshes;
 
     // Keeps track of the total loaded vertex count
     std::size_t m_loadedVertexCount = 0;
