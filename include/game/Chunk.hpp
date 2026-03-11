@@ -89,6 +89,12 @@ public:
     const std::vector<float>& GetMeshVertices() const { return m_MeshVertices; }
 
     /**
+     * @brief Gets the generated grass overlay vertices after BuildMesh() is called.
+     * Vertex format is (x, y, z, u, v, layer) - 6 floats.
+     */
+    const std::vector<float>& GetGrassVertices() const { return m_GrassVertices; }
+
+    /**
      * @brief Gets the number of vertices in the current mesh.
      */
     int GetVertexCount() const { return m_VertexCount; }
@@ -101,6 +107,13 @@ private:
                  float textureLayer,
                  const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
 
+    /**
+     * @brief Helper to add a 6-vertex quad (2 triangles) to the grass overlay data.
+     */
+    void AddGrassQuad(const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
+                      float textureLayer,
+                      const glm::vec2& uv1, const glm::vec2& uv2, const glm::vec2& uv3, const glm::vec2& uv4);
+
     // 3D array of blocks [x][y][z]
     BlockState m_Blocks[CHUNK_WIDTH][CHUNK_HEIGHT][CHUNK_WIDTH];
 
@@ -108,8 +121,12 @@ private:
     std::vector<float> m_MeshVertices;
     int m_VertexCount;
 
+    // Grass overlay render data
+    std::vector<float> m_GrassVertices;
+
     // Gaussian splat data for this chunk
     std::vector<Splat> m_Splats;
 
     glm::vec3 center;
 };
+

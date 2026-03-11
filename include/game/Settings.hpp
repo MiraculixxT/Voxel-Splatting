@@ -14,7 +14,7 @@ public:
     bool GLGeometry = true;
 
     // Fog settings
-    float FogStartMult = 0.85;
+    float FogStartMult = 0.35;
     float FogEndMult = 1.0;
 
 };
