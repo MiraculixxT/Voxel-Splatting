@@ -37,26 +37,44 @@ float calcShadow(vec4 lightSpacePos, vec3 normal) {
     // Slope-dependent bias: smaller on front faces, larger on grazing angles
     vec3 L = normalize(-lightDir);
     float cosTheta = max(dot(normalize(normal), L), 0.0);
-    float bias = max(0.0005, 0.003 * (1.0 - cosTheta));
+    float bias = max(0.0, 0.00003 * (1.0 - cosTheta));
+    float contactOffset = -0.0005; // pull contact shadows slightly into the caster
 
-    // 3x3 PCF sampling
+    // 5x5 PCF sampling for smoother shadows
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(uShadowMap, 0);
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
+    for (int x = -2; x <= 2; ++x) {
+        for (int y = -2; y <= 2; ++y) {
             float pcfDepth = texture(uShadowMap,
                                      projCoords.xy + vec2(x, y) * texelSize).r;
-            shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+            shadow += (currentDepth - contactOffset - bias > pcfDepth) ? 1.0 : 0.0;
         }
     }
-    shadow /= 9.0;
+    shadow /= 25.0;
     return shadow;
 }
 
 void main() {
     // Sample the 2D array
-    vec4 texColor = texture(textureArray, TexCoord);
-    if (texColor.a < 0.1) discard;
+    int layer = int(TexCoord.z + 0.5);
+    vec3 sampleCoord = TexCoord;
+    if (layer == 6) { // water
+        const float waveSpeed = 0.8;
+        const float waveScale = 0.35;
+        const float waveAmp = 0.03;
+        float t = time * waveSpeed;
+        float waveA = sin((WorldPos.x + t) * 2.3) + cos((WorldPos.z - t) * 1.9);
+        float waveB = sin((WorldPos.x + WorldPos.z + t) * 1.3);
+        vec2 offset = vec2(waveA, waveB) * waveAmp;
+        sampleCoord.xy += offset * waveScale;
+    }
+    vec4 texColor = texture(textureArray, sampleCoord);
+    float alphaCutoff = (layer == 9) ? 0.6 : 0.1; // 9 = leaves layer
+    if (texColor.a < alphaCutoff) discard;
+    if (layer == 9) {
+        // Treat leaves as cutout-opaque to avoid fog/sky bleed on fringe pixels.
+        texColor.a = 1.0;
+    }
 
     // Compute geometric normal from world-space position (works for block faces)
     vec3 dx = dFdx(WorldPos);

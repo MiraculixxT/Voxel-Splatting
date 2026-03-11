@@ -349,7 +349,8 @@ void GLWorldRenderer::Init() {
     }
 
     // Initialize shadow map (resolution can be tuned)
-    if (!m_ShadowMap.init(2048, 2048)) {
+    constexpr int kShadowMapSize = 4096;
+    if (!m_ShadowMap.init(kShadowMapSize, kShadowMapSize)) {
         std::cerr << "Failed to init shadow map" << std::endl;
     }
 
@@ -650,7 +651,7 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     }
 
     // Render Gaussian splats using the same view-projection and lighting/shadow data
-    if (m_SplatRenderer) {
+    if (m_SplatRenderer && false) {
         const glm::mat4 viewProj = projection * view;
 
         // configure lighting/shadows for splats (reuse same light matrix and shadow map)

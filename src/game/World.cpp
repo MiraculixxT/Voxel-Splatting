@@ -108,6 +108,18 @@ bool World::setBlock(const int wx, const int wy, const int wz, const BlockType b
         chunkRenderer->UploadMesh(chunk->cx, chunk->cz, chunk->GetMeshVertices());
         chunkRenderer->UploadGrassMesh(chunk->cx, chunk->cz, chunk->GetGrassVertices());
     }
+
+    // Rebuild neighboring chunks if the changed block touches a border.
+    const bool atMinX = (bx == 0);
+    const bool atMaxX = (bx == CHUNK_WIDTH - 1);
+    const bool atMinZ = (bz == 0);
+    const bool atMaxZ = (bz == CHUNK_WIDTH - 1);
+
+    if (atMinX) rebuildChunk(chunk->cx - 1, chunk->cz);
+    if (atMaxX) rebuildChunk(chunk->cx + 1, chunk->cz);
+    if (atMinZ) rebuildChunk(chunk->cx, chunk->cz - 1);
+    if (atMaxZ) rebuildChunk(chunk->cx, chunk->cz + 1);
+
     return true;
 }
 

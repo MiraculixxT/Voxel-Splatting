@@ -356,14 +356,25 @@ void Chunk::BuildMesh(World &world) {
                     return true;
                 };
 
+                // Emits a face and (for leaves) a backface with reversed winding.
+                auto EmitFace = [&](const glm::vec3& p1, const glm::vec3& p2, const glm::vec3& p3, const glm::vec3& p4,
+                                    float textureLayer,
+                                    const glm::vec2& tuv1, const glm::vec2& tuv2, const glm::vec2& tuv3, const glm::vec2& tuv4) {
+                    AddFace(p1, p2, p3, p4, textureLayer, tuv1, tuv2, tuv3, tuv4);
+                    if (currentType == BlockType::Leaves) {
+                        // Reverse winding so backfaces render without changing global cull state.
+                        AddFace(p1, p4, p3, p2, textureLayer, tuv1, tuv4, tuv3, tuv2);
+                    }
+                };
+
                 // Top Face (y+)
                 if (ShouldDrawFace(GetBlock(x, y + 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Top);
-                    AddFace({wx,     fy + 1, wz},
-                            {wx,     fy + 1, wz + 1},
-                            {wx + 1, fy + 1, wz + 1},
-                            {wx + 1, fy + 1, wz},
-                            layer, uv1, uv4, uv3, uv2);
+                    EmitFace({wx,     fy + 1, wz},
+                             {wx,     fy + 1, wz + 1},
+                             {wx + 1, fy + 1, wz + 1},
+                             {wx + 1, fy + 1, wz},
+                             layer, uv1, uv4, uv3, uv2);
 
                     if (currentType == BlockType::Grass) {
                         const int hash = Squirrel3(x, y, z, cx, cz);
@@ -403,11 +414,11 @@ void Chunk::BuildMesh(World &world) {
                 // Bottom Face (y-)
                 if (ShouldDrawFace(GetBlock(x, y - 1, z))) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Bottom);
-                    AddFace({wx,     fy, wz},
-                            {wx + 1, fy, wz},
-                            {wx + 1, fy, wz + 1},
-                            {wx,     fy, wz + 1},
-                            layer, uv1, uv2, uv3, uv4);
+                    EmitFace({wx,     fy, wz},
+                             {wx + 1, fy, wz},
+                             {wx + 1, fy, wz + 1},
+                             {wx,     fy, wz + 1},
+                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Front Face (z+)
@@ -421,11 +432,11 @@ void Chunk::BuildMesh(World &world) {
                 } else neighborZ_pos = GetBlock(x, y, z + 1); // Internal check
                 if (ShouldDrawFace(neighborZ_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({wx,     fy,     wz + 1},
-                            {wx + 1, fy,     wz + 1},
-                            {wx + 1, fy + 1, wz + 1},
-                            {wx,     fy + 1, wz + 1},
-                            layer, uv1, uv2, uv3, uv4);
+                    EmitFace({wx,     fy,     wz + 1},
+                             {wx + 1, fy,     wz + 1},
+                             {wx + 1, fy + 1, wz + 1},
+                             {wx,     fy + 1, wz + 1},
+                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Back Face (z-)
@@ -440,11 +451,11 @@ void Chunk::BuildMesh(World &world) {
                 } else neighborZ_neg = GetBlock(x, y, z - 1); // Internal check
                 if (ShouldDrawFace(neighborZ_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({wx + 1, fy,     wz},
-                            {wx,     fy,     wz},
-                            {wx,     fy + 1, wz},
-                            {wx + 1, fy + 1, wz},
-                            layer, uv1, uv2, uv3, uv4);
+                    EmitFace({wx + 1, fy,     wz},
+                             {wx,     fy,     wz},
+                             {wx,     fy + 1, wz},
+                             {wx + 1, fy + 1, wz},
+                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Right Face (x+)
@@ -459,11 +470,11 @@ void Chunk::BuildMesh(World &world) {
                 } else neighborX_pos = GetBlock(x + 1, y, z); // Internal check
                 if (ShouldDrawFace(neighborX_pos)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({wx + 1, fy,     wz + 1},
-                            {wx + 1, fy,     wz},
-                            {wx + 1, fy + 1, wz},
-                            {wx + 1, fy + 1, wz + 1},
-                            layer, uv1, uv2, uv3, uv4);
+                    EmitFace({wx + 1, fy,     wz + 1},
+                             {wx + 1, fy,     wz},
+                             {wx + 1, fy + 1, wz},
+                             {wx + 1, fy + 1, wz + 1},
+                             layer, uv1, uv2, uv3, uv4);
                 }
 
                 // Left Face (x-)
@@ -478,11 +489,11 @@ void Chunk::BuildMesh(World &world) {
                 } else neighborX_neg = GetBlock(x - 1, y, z); // Internal check
                 if (ShouldDrawFace(neighborX_neg)) {
                     float layer = BlockDatabase::GetTextureLayer(currentType, BlockFace::Side);
-                    AddFace({wx, fy,     wz},
-                            {wx, fy,     wz + 1},
-                            {wx, fy + 1, wz + 1},
-                            {wx, fy + 1, wz},
-                            layer, uv1, uv2, uv3, uv4);
+                    EmitFace({wx, fy,     wz},
+                             {wx, fy,     wz + 1},
+                             {wx, fy + 1, wz + 1},
+                             {wx, fy + 1, wz},
+                             layer, uv1, uv2, uv3, uv4);
                 }
             }
         }
