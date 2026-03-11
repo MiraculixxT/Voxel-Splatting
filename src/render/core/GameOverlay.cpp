@@ -341,7 +341,7 @@ void GameOverlay::RenderHotbarNumbers() {
             model = glm::scale(model, glm::vec3(textWidth, textHeight, 1.0f));
 
             m_TextShader.setMat4("model", model);
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+            //glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
         }
 
         if (slot.empty() || slot.count <= 0) continue;
