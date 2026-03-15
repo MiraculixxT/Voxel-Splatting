@@ -1,59 +1,38 @@
-#version 330 core
+#version 450 core
+layout(location = 0) in vec2 quadPos; // (-1,-1) to (1,1)
+layout(location = 1) in vec3 center;
+layout(location = 2) in vec3 scale;
+layout(location = 3) in vec4 rot; // Quaternion (xyzw)
+layout(location = 4) in vec4 color;
 
-// Quad-Ecke im lokalen 2D-Raum (-1..1)
-layout(location = 0) in vec2 inCorner;
+uniform mat4 view;
+uniform mat4 projection;
 
-// Instanzdaten pro Splat
-layout(location = 1) in vec3 inPosition; // center
-layout(location = 2) in vec3 inScale;    // sigma in tangentialer Ebene
-layout(location = 3) in vec3 inNormal;   // Face-Normal
-layout(location = 4) in vec3 inColor;
-layout(location = 5) in float inOpacity;
+out vec2 v_uv;
+out vec4 v_color;
 
-// Texturkoordinaten und Layer aus der Instanz
-layout(location = 6) in vec2  inUV;
-layout(location = 7) in float inLayer;
+// Helper to rotate a vector by a quaternion
+vec3 rotate_quat(vec3 v, vec4 q) {
+    return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+}
 
-out VS_OUT {
-    vec3 color;
-    float opacity;
-    vec2 localPos; // für Gaussian im Fragment
-    vec2 uv;       // Texturkoordinate
-    float layer;   // Atlas-Layer
-    vec4 lightSpacePos; // Position im Licht-Raum für Shadow Mapping
-} vs_out;
+void main() {
+    v_uv = quadPos;
+    v_color = color;
 
-uniform mat4 uViewProj;
-uniform mat4 lightViewProj;
+    // 1. Get Camera Right and Up vectors for billboarding
+    vec3 right = vec3(view[0][0], view[1][0], view[2][0]);
+    vec3 up    = vec3(view[0][1], view[1][1], view[2][1]);
 
-void main()
-{
-    // Orthonormalbasis aus Normal
-    vec3 n = normalize(inNormal);
-    vec3 tangent;
-    if (abs(n.y) > 0.5) {
-        tangent = vec3(1.0, 0.0, 0.0);
-    } else {
-        tangent = vec3(0.0, 1.0, 0.0);
-    }
-    vec3 bitangent = normalize(cross(n, tangent));
-    tangent        = normalize(cross(bitangent, n));
+    // 2. Apply Rotation and Scale to the quad vertices
+    // We treat the quad as a flat plane in 3D space then rotate it
+    vec3 localPos = vec3(quadPos.x * scale.x, quadPos.y * scale.y, 0.0);
+    vec3 rotatedPos = rotate_quat(localPos, rot);
 
-    // inCorner ∈ [-1,1]^2 → volles Quad nutzen
-    vec2 p = inCorner;
-    vec3 worldPos =
-        inPosition +
-        tangent   * (p.x * inScale.x) +
-        bitangent * (p.y * inScale.y);
+    // 3. Simple Billboarding (keeping it simple for the showcase)
+    // For true GS, you'd use the Jacobian, but for a showcase,
+    // aligning the scaled/rotated quad to the camera works well:
+    vec3 worldPos = center + (right * rotatedPos.x) + (up * rotatedPos.y);
 
-    // Position des Splat-Pixels im Licht-Raum (für Shadow Mapping)
-    vs_out.lightSpacePos = lightViewProj * vec4(worldPos, 1.0);
-
-    gl_Position = uViewProj * vec4(worldPos, 1.0);
-
-    vs_out.color    = inColor;
-    vs_out.opacity  = inOpacity;
-    vs_out.localPos = p;        // für r^2 im Fragmentshader
-    vs_out.uv       = inUV;     // Texturkoordinate weiterreichen
-    vs_out.layer    = inLayer;  // Atlas-Layer weiterreichen
+    gl_Position = projection * view * vec4(worldPos, 1.0);
 }

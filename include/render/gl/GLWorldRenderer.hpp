@@ -6,6 +6,7 @@
 #include "render/core/Camera.hpp"
 #include "GLSplatRenderer.hpp"
 #include "GLShadowMap.hpp"
+#include "happly.hpp"
 
 class GLWorldRenderer {
 public:
@@ -13,12 +14,33 @@ public:
         : m_Camera(camera), m_Settings(settings), m_World(world) {}
     ~GLWorldRenderer();
 
+    struct SplatData {
+        glm::vec3 pos;
+        float scale[3];
+        float rot[4];    // Quaternion (xyzw)
+        uint8_t color[4]; // RGBA
+    };
+
+    struct SortItem {
+        float distance;
+        int index;
+    };
+
     void Init();
+
+    void InitializeSplats(happly::PLYData &plyIn);
+
     void RenderWorld();
     GLChunkRenderer* GetChunkRenderer() const { return m_ChunkRenderer; }
     GLSplatRenderer* GetSplatRenderer() const { return m_SplatRenderer; }
 
     void RenderShadowPass();
+
+    // PLY
+    std::vector<SplatData> m_SplatRawData;
+    std::vector<SplatData> m_SortedSplatData; // Data to be uploaded to GPU
+    std::vector<SortItem> m_SortList;
+    unsigned int m_SplatVBO, m_SplatVAO;
 
 private:
     Camera& m_Camera;
@@ -35,6 +57,7 @@ private:
 
     GLShader* m_BlockShader = nullptr;
     GLShader* m_GrassShader = nullptr;
+    GLShader* m_SplatShader = nullptr;
     unsigned int m_TextureArray = 0;
 
     // Sky rendering
@@ -48,4 +71,6 @@ private:
     GLuint m_GodrayOcclusionFBO = 0;
     GLuint m_GodrayOcclusionTex = 0;
     GLShader* m_GodrayOcclusionShader = nullptr;
+
+    glm::vec3 m_LastSortPos;
 };

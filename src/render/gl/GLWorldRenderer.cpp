@@ -17,6 +17,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/norm.hpp"
+#include "render/gl/happly.hpp"
+
 namespace {
     struct GroundTruthCapture {
         GLuint fbo = 0;
@@ -302,6 +306,7 @@ void GLWorldRenderer::Init() {
     // Setup shader
     m_BlockShader = new GLShader("assets/shaders/block.vsh", "assets/shaders/block.fsh");
     m_GrassShader = new GLShader("assets/shaders/grass.vsh", "assets/shaders/grass.fsh");
+    m_SplatShader = new GLShader("assets/shaders/splat.vsh", "assets/shaders/splat.fsh");
 
     // Setup shadow depth shader
     m_ShadowShader = new GLShader("assets/shaders/shadow_depth.vsh",
@@ -413,6 +418,110 @@ void GLWorldRenderer::Init() {
             }
         }
     }
+
+    // PLY
+    printf("Loading trained.ply...\n");
+    happly::PLYData plyIn("assets/trained.ply");
+    InitializeSplats(plyIn);
+    printf(" - Finished!\n");
+}
+
+void GLWorldRenderer::InitializeSplats(happly::PLYData& plyIn) {
+    auto pos = plyIn.getVertexPositions();
+
+    auto s0 = plyIn.getElement("vertex").getProperty<float>("scale_0");
+    auto s1 = plyIn.getElement("vertex").getProperty<float>("scale_1");
+    auto s2 = plyIn.getElement("vertex").getProperty<float>("scale_2");
+    auto r0 = plyIn.getElement("vertex").getProperty<float>("rot_0");
+    auto r1 = plyIn.getElement("vertex").getProperty<float>("rot_1");
+    auto r2 = plyIn.getElement("vertex").getProperty<float>("rot_2");
+    auto r3 = plyIn.getElement("vertex").getProperty<float>("rot_3");
+    auto opacity = plyIn.getElement("vertex").getProperty<float>("opacity");
+
+    // Colors: Usually stored as 'f_dc_0, f_dc_1, f_dc_2' (Spherical Harmonics)
+    // For a simple showcase, we just take the DC component (base color)
+    auto r = plyIn.getElement("vertex").getProperty<float>("f_dc_0");
+    auto g = plyIn.getElement("vertex").getProperty<float>("f_dc_1");
+    auto b = plyIn.getElement("vertex").getProperty<float>("f_dc_2");
+
+    size_t num = pos.size();
+    m_SplatRawData.resize(num);
+    m_SortedSplatData.resize(num);
+    m_SortList.resize(num);
+
+    for (size_t i = 0; i < num; i++) {
+        m_SplatRawData[i].pos = glm::vec3(pos[i][0], pos[i][1], pos[i][2]);
+        m_SplatRawData[i].scale[0] = exp(s0[i]); // Splats are stored in log-space
+        m_SplatRawData[i].scale[1] = exp(s1[i]);
+        m_SplatRawData[i].scale[2] = exp(s2[i]);
+        m_SplatRawData[i].rot[0] = r1[i]; // Convert xyzw
+        m_SplatRawData[i].rot[1] = r2[i];
+        m_SplatRawData[i].rot[2] = r3[i];
+        m_SplatRawData[i].rot[3] = r0[i];
+
+        // Simple Sigmoid for opacity and SH-to-RGB conversion
+        auto sigmoid = [](float x) { return 1.0f / (1.0f + exp(-x)); };
+        float alpha = sigmoid(opacity[i]);
+
+        // SH to RGB (simplified)
+        const float SH_C0 = 0.28209479177387814f;
+        m_SplatRawData[i].color[0] = (uint8_t)glm::clamp((0.5f + SH_C0 * r[i]) * 255.0f, 0.0f, 255.0f);
+        m_SplatRawData[i].color[1] = (uint8_t)glm::clamp((0.5f + SH_C0 * g[i]) * 255.0f, 0.0f, 255.0f);
+        m_SplatRawData[i].color[2] = (uint8_t)glm::clamp((0.5f + SH_C0 * b[i]) * 255.0f, 0.0f, 255.0f);
+        m_SplatRawData[i].color[3] = (uint8_t)(alpha * 255.0f);
+    }
+
+    // Setup GPU Buffers (VAO/VBO) here using glVertexAttribPointer
+    // 1. Setup the Quad (Unit Square)
+    float quadVertices[] = {
+        -1.0f, -1.0f,
+         1.0f, -1.0f,
+        -1.0f,  1.0f,
+         1.0f,  1.0f
+    };
+    unsigned int quadVBO;
+    glGenBuffers(1, &quadVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
+
+    // 2. Setup the VAO
+    glGenVertexArrays(1, &m_SplatVAO);
+    glGenBuffers(1, &m_SplatVBO);
+
+    glBindVertexArray(m_SplatVAO);
+
+    // --- ATTRIBUTE 0: Quad Positions (Vertex Data) ---
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+
+    // --- ATTRIBUTE 1-4: Splat Data (Instance Data) ---
+    glBindBuffer(GL_ARRAY_BUFFER, m_SplatVBO);
+
+    // Position (vec3)
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(SplatData), (void*)offsetof(SplatData, pos));
+    glVertexAttribDivisor(1, 1); // Important: Update once per INSTANCE
+
+    // Scale (vec3)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(SplatData), (void*)offsetof(SplatData, scale));
+    glVertexAttribDivisor(2, 1);
+
+    // Rotation (vec4)
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(SplatData), (void*)offsetof(SplatData, rot));
+    glVertexAttribDivisor(3, 1);
+
+    // Color (RGBA uint8_t normalized to 0.0-1.0)
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(SplatData), (void*)offsetof(SplatData, color));
+    glVertexAttribDivisor(4, 1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, m_SplatVBO);
+    glBufferData(GL_ARRAY_BUFFER, num * sizeof(SplatData), nullptr, GL_STREAM_DRAW);
+
+    glBindVertexArray(0);
 }
 
 void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const is not possible
@@ -651,20 +760,51 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
     }
 
     // Render Gaussian splats using the same view-projection and lighting/shadow data
-    if (m_SplatRenderer && false) {
-        const glm::mat4 viewProj = projection * view;
+    if (m_Settings.GLPLY && !m_SplatRawData.empty()) {
+        // Check if we need to sort (Performance optimization)
+        float distMove = glm::distance(m_Camera.Position, m_LastSortPos);
+        if (distMove > 0.5f) { // Only sort if moved half a block
 
-        // configure lighting/shadows for splats (reuse same light matrix and shadow map)
-        m_SplatRenderer->SetLighting(m_LightViewProj, m_ShadowMap.getDepthTexture(), m_SunDir);
+            // Update distances
+            for (int i = 0; i < m_SplatRawData.size(); i++) {
+                m_SortList[i].distance = glm::distance2(m_Camera.Position, m_SplatRawData[i].pos);
+                m_SortList[i].index = i;
+            }
 
-        // camera chunk coordinates
-        const int camChunkX = static_cast<int>(std::floor(m_Camera.Position.x)) / CHUNK_WIDTH;
-        const int camChunkZ = static_cast<int>(std::floor(m_Camera.Position.z)) / CHUNK_WIDTH;
+            // Sort Indices (Back-to-Front)
+            std::sort(m_SortList.begin(), m_SortList.end(), [](const SortItem& a, const SortItem& b) {
+                return a.distance > b.distance;
+            });
 
-        // how many chunks around the player to draw splats
-        const int SPLAT_RENDER_DISTANCE_CHUNKS = 2;
+            // Rebuild the data vector in sorted order
+            for (int i = 0; i < m_SplatRawData.size(); i++) {
+                m_SortedSplatData[i] = m_SplatRawData[m_SortList[i].index];
+            }
 
-        m_SplatRenderer->Draw(viewProj, camChunkX, camChunkZ, SPLAT_RENDER_DISTANCE_CHUNKS);
+            // Upload to GPU
+            glBindBuffer(GL_ARRAY_BUFFER, m_SplatVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, m_SortedSplatData.size() * sizeof(SplatData), m_SortedSplatData.data());
+
+            m_LastSortPos = m_Camera.Position;
+        }
+
+        // 3. RENDER
+        glEnable(GL_BLEND);
+        // Standard Pre-multiplied Blend Func
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        glDepthMask(GL_FALSE);
+        glEnable(GL_DEPTH_TEST); // We still want to be occluded by blocks!
+
+        m_SplatShader->use();
+        m_SplatShader->setMat4("projection", projection);
+        m_SplatShader->setMat4("view", view);
+
+        glBindVertexArray(m_SplatVAO);
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, (GLsizei)m_SortedSplatData.size());
+
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
     }
 
     // --- Godray occlusion pass: render geometry into low-res occlusion texture ---

@@ -78,6 +78,7 @@ void GUIRenderer::RenderSettingsScreen(
 
     ImGui::Text("----- LAYERING -----");
     ImGui::Checkbox("GL Geometry", &settings.GLGeometry);
+    ImGui::Checkbox("GSplats", &settings.GLPLY);
     ImGui::SliderFloat("GL From", &settings.GLFrom, 0.01f, 50.0f);
     ImGui::SliderFloat("GL To", &settings.GLTo, settings.GLFrom, 500.0f);
     ImGui::SliderFloat("Fog Start", &settings.FogStartMult, 0.0f, 1.0f);

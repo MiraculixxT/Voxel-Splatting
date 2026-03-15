@@ -12,6 +12,7 @@ public:
     float GLFrom = 0.1f;
     float GLTo = 200.0f;
     bool GLGeometry = true;
+    bool GLPLY = false;
 
     // Fog settings
     float FogStartMult = 0.35;

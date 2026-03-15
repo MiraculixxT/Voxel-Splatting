@@ -11,6 +11,7 @@
 #include "render/core/GUIRenderer.hpp"
 #include "render/gl/GLChunkRenderer.hpp"
 #include "game/Player.hpp"
+#include "render/gl/happly.hpp"
 
 #include "render/core/GameOverlay.hpp"
 
