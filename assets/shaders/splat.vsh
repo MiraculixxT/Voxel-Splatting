@@ -7,6 +7,7 @@ layout(location = 4) in vec4 color;
 
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 splatModel;
 
 out vec2 v_uv;
 out vec4 v_color;
@@ -29,10 +30,9 @@ void main() {
     vec3 localPos = vec3(quadPos.x * scale.x, quadPos.y * scale.y, 0.0);
     vec3 rotatedPos = rotate_quat(localPos, rot);
 
-    // 3. Simple Billboarding (keeping it simple for the showcase)
-    // For true GS, you'd use the Jacobian, but for a showcase,
-    // aligning the scaled/rotated quad to the camera works well:
-    vec3 worldPos = center + (right * rotatedPos.x) + (up * rotatedPos.y);
+    // Apply global transform to the center position
+    vec4 worldCenter = splatModel * vec4(center, 1.0);
+    vec3 worldPos = worldCenter.xyz + (right * rotatedPos.x) + (up * rotatedPos.y);
 
     gl_Position = projection * view * vec4(worldPos, 1.0);
 }

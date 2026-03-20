@@ -451,9 +451,10 @@ void GLWorldRenderer::InitializeSplats(happly::PLYData& plyIn) {
 
     for (size_t i = 0; i < num; i++) {
         m_SplatRawData[i].pos = glm::vec3(pos[i][0], pos[i][1], pos[i][2]);
-        m_SplatRawData[i].scale[0] = exp(s0[i]); // Splats are stored in log-space
-        m_SplatRawData[i].scale[1] = exp(s1[i]);
-        m_SplatRawData[i].scale[2] = exp(s2[i]);
+        float uGlobalSplatScale = 1.0f;
+        m_SplatRawData[i].scale[0] = exp(s0[i]) * uGlobalSplatScale; // Splats are stored in log-space
+        m_SplatRawData[i].scale[1] = exp(s1[i]) * uGlobalSplatScale;
+        m_SplatRawData[i].scale[2] = exp(s2[i]) * uGlobalSplatScale;
         m_SplatRawData[i].rot[0] = r1[i]; // Convert xyzw
         m_SplatRawData[i].rot[1] = r2[i];
         m_SplatRawData[i].rot[2] = r3[i];
@@ -796,7 +797,12 @@ void GLWorldRenderer::RenderWorld() { // performs sub function edits, so const i
         glDepthMask(GL_FALSE);
         glEnable(GL_DEPTH_TEST); // We still want to be occluded by blocks!
 
+        glm::mat4 splatModel = glm::mat4(1.0f);
+        splatModel = glm::translate(splatModel, glm::vec3(0, 67, 0));
+        //splatModel = glm::rotate(splatModel, glm::radians(90.0f), glm::vec3(1, 0, 0)); // Fix Y/Z flip
+        splatModel = glm::scale(splatModel, glm::vec3(1.0f));
         m_SplatShader->use();
+        m_SplatShader->setMat4("splatModel", splatModel);
         m_SplatShader->setMat4("projection", projection);
         m_SplatShader->setMat4("view", view);
 
